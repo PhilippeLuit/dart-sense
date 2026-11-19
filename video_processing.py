@@ -5,9 +5,10 @@ import numpy as np
 import time
 
 class VideoProcessing:
-    def __init__(self, model_dir="weights.pt", auto_commit_seconds=3.0):
+    def __init__(self, model_dir="weights.pt", auto_commit_seconds=3.0, device=None):
         self.model = YOLO(model_dir)
         self.predict = GetScores(model_dir)
+        self.device = device  # None = ultralytics default (CPU), 'mps' = Apple GPU, '0' = first CUDA GPU
         # a visit with fewer than 3 detected darts (bounce-out, missed dart) commits by itself
         # once no dart has been seen on the board for this long. None disables it.
         self.auto_commit_seconds = auto_commit_seconds
@@ -159,7 +160,8 @@ class VideoProcessing:
         prev_frame_time = 0
         new_frame_time = 0
 
-        results = self.model(self.resolve_source(source), stream=True, verbose=False)
+        kwargs = {'device': self.device} if self.device else {}
+        results = self.model(self.resolve_source(source), stream=True, verbose=False, **kwargs)
 
         for result in results:
 

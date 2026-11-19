@@ -16,8 +16,8 @@ from tkinter import ttk # submodule implementing a set of newer 'themed' widgets
 from PIL import ImageTk, Image
 
 class GUI:
-    def __init__(self):
-        self.video_processing = VideoProcessing()
+    def __init__(self, model_dir="weights.pt", device=None):
+        self.video_processing = VideoProcessing(model_dir, device=device)
         self.predict = GetScores()
         
         self.root = Tk()

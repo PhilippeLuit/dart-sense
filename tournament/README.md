@@ -55,7 +55,13 @@ and totals. Start with `--fresh` to wipe it.
 
    No menus, no typing at the board. Team names come from the control page.
    The window shows `Waiting for round start`. (`GUI.py` still works for a
-   manual setup via the menus.)
+   manual setup via the menus.) To run several boards on one machine, for
+   example with network cameras, use `boards.py`, which starts one process
+   per camera and restarts a board that crashes:
+
+   ```
+   python boards.py --server http://192.168.0.10:8000 --cameras rtsp://cam1/stream1 rtsp://cam2/stream1
+   ```
 4. Open `/` on the big screen.
 5. Press `Start round` in `/control`. The boards get the teams of that round
    from the schedule, reset to 0, and the countdown starts everywhere.

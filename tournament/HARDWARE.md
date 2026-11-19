@@ -1,73 +1,110 @@
 # Hardware setup for a 4-board tournament
 
-Recommended: **one laptop per board with a USB webcam**, one extra laptop for
-the scoreboard server and the big screen.
+Chosen setup: **four PoE IP cameras, one MacBook running all four boards, a
+second Mac as server and big screen.**
 
-## Why one laptop per board
+```
+ PoE camera bord 1 ─┐
+ PoE camera bord 2 ─┤  PoE switch ── MacBook A (4 x board.py, via boards.py)
+ PoE camera bord 3 ─┤       │
+ PoE camera bord 4 ─┘       └────── MacBook B (server, control page, big screen → TV)
+```
 
-- Each board is isolated. If one laptop or camera fails, the other three games
-  keep running and that board switches to the manual scoring page.
-- Players see their live score, the detected darts and the timer at the board,
-  and can correct a misread dart there. That needs a screen and a mouse.
-- CPU inference is enough for one stream. YOLOv8n runs at roughly 10 to 30
-  frames per second on a recent laptop CPU, and a dart commits after it repeats
-  in 3 of the last 5 frames, so a few frames per second is enough. No GPU needed.
-- The laptop battery doubles as a UPS when a power strip gets kicked.
+## Why this works
 
-One machine driving all four cameras is the worse option: USB cable length is
-limited to a few metres, four cameras compete for USB bandwidth, and one crash
-stops the whole tournament.
+- Network cameras remove every USB limit: no hub, no 5 m cable limit, no
+  bandwidth fight. Four 1080p streams are 20 to 40 Mbit/s together.
+- Power and video go through one cable per camera, up to 100 m. The camera
+  is mounted once and stays put, which keeps the calibration stable.
+- A MacBook M-series runs YOLOv8n at 20 to 40 frames per second on the CPU
+  for one stream, so four streams still give 5 to 10 per board. The app only
+  needs a few frames per second: a dart counts after it repeats in 3 of the
+  last 5 frames, and visits commit on a timer.
+- The app accepts an RTSP address directly, no code change.
 
-## Why USB webcams instead of phones
+## Shopping list
 
-- No video over Wi-Fi. Only small score updates cross the network.
-- No phone battery, overheating or screen timeout problems during a long evening.
-- One cable per board, and nobody's personal phone is tied up.
+| Item | Count | Note |
+|------|-------|------|
+| PoE IP camera with RTSP, 1080p or better | 4 (+1 spare) | Fixed focus or manual focus, 30 to 60 euro each |
+| PoE switch, 5+ ports | 1 | Gigabit, enough PoE budget for 4 cameras |
+| Network cable | 6 | 4 cameras, 2 Macs |
+| Camera mounts | 4 | Rigid, out of the throwing line |
+| LED lighting per board | 4 | Even light, no glare on the wires |
+| MacBook (M-series, 16 GB) | 2 | A: boards, B: server + big screen |
+| TV or beamer + HDMI/USB-C cable | 1 | Big screen |
+| Phones with the manual page open | 4 | Fallback |
 
-A 1080p webcam with a decent sensor, in the class of a Logitech C920 or C922,
-is plenty. Set focus to manual if the camera allows it, keep auto exposure on.
-In the app, enter the camera index (`0` for the first camera, `1` for the next)
-instead of an IP address. The app reads the frame size from the camera.
+An Intel NUC or any laptop can stand in for either Mac. Keep one ready as
+spare for the boards machine.
 
-## Camera placement matters more than the camera
+## Camera placement
 
-- Mount it rigidly: a clamp arm or microphone boom on the wall or a stand. Not a
-  tripod on the floor where it gets bumped. If the camera moves mid-game the
-  calibration shifts and scores go wrong.
 - Above and slightly in front of the board, angled down, about 1 metre away.
-  The full board with all four calibration points (the outer corners of the 20,
-  6, 3 and 11 double segments) should fill most of the frame, and dart tips must
-  stay visible.
-- Even, bright light with no glare on the wires. A cheap LED ring or strip
-  around the board removes most detection failures.
-- Keep the camera out of the throwing line and away from where players stand to
-  pull their darts.
+  The full board with the four calibration points (outer corners of the 20,
+  6, 3 and 11 doubles) fills most of the frame; dart tips stay visible.
+- Rigid mount. If the camera moves mid-game the scores go wrong.
+- Even, bright light, no glare. A cheap LED ring or strip around the board
+  removes most detection failures.
+- Fixed focus, 1080p, 15 to 25 frames per second is plenty. Higher frame
+  rates only cost bandwidth.
 
-## The rest of the kit
+## Network
 
-- One laptop for the scoreboard server and the organiser page. It can drive the
-  big screen over HDMI. The server is light enough to share a board laptop.
-- A TV or beamer for the big screen, any browser in full screen on `/`.
-- A dedicated small router. Ethernet to the board laptops if cables are
-  practical, otherwise Wi-Fi is fine since no video crosses it.
-- Four phones or tablets with the manual scoring page (`/board?n=1` to `4`)
-  open, as the fallback.
-- Power strips, USB extension cables, one spare webcam.
+- Give every camera, MacBook A and MacBook B a fixed IP address.
+- Keep the tournament network separate from guests' Wi-Fi. Everything that
+  matters is on the cable.
+- Find each camera's RTSP address in its web interface, typically
+  `rtsp://<ip>:554/stream1` or similar. Test it first with VLC or
+  `ffplay`.
 
-## Shopping list per board
+## MacBook A: the boards
 
-| Item | Note |
-|------|------|
-| Laptop, recent CPU, 8 GB RAM | Any machine from the last 4 years |
-| 1080p USB webcam | C920 class |
-| Clamp arm or boom mount | Rigid, out of the throwing line |
-| USB extension, 3 m | Active cable if longer |
-| LED lighting | Even light, no glare |
+Install once:
+
+```
+brew install python@3.12 python-tk@3.12
+python3.12 -m venv .venv && source .venv/bin/activate
+pip install ultralytics opencv-python pillow
+```
+
+Start all four boards with one command:
+
+```
+python boards.py --server http://<ip-macbook-b>:8000 \
+    --cameras rtsp://<cam1>:554/stream1 rtsp://<cam2>:554/stream1 \
+              rtsp://<cam3>:554/stream1 rtsp://<cam4>:554/stream1
+```
+
+Camera 1 is board 1, and so on. Each board gets its own window; a board that
+crashes restarts by itself. Logs are in `logs/board<N>.log`. Options:
+
+- `--device mps` uses the Apple GPU. Not needed, the CPU is fast enough; try
+  it if a test shows the frame rate per board dropping below about 4.
+- `--model weights_openvino_model` or another export, for Intel machines.
+
+Settings on the Mac: no sleep with the lid open, screen never off, and allow
+the Terminal to use the network when macOS asks. Put the MacBook between the
+boards so players can glance at their window and correct a dart.
+
+## MacBook B: server and big screen
+
+```
+python tournament/server.py --port 8000 --boards 4 --duration 600
+```
+
+Open `http://localhost:8000/` in a browser in full screen on the TV, and
+`http://<ip-macbook-b>:8000/control` on the organiser's phone or laptop.
+Standard library only, nothing to install.
 
 ## Before the event
 
-1. Install the app on every board laptop and run a game with the real webcam.
-2. Set up the exact camera position and lighting at the venue, test detection,
-   and photograph the setup so it can be reproduced on the day.
-3. Do a full rehearsal with all four boards, the server, the big screen and the
-   manual pages on the venue network.
+1. Mount one camera, open its RTSP stream in the app, check detection with
+   the real darts, board and lighting. Adjust position and light until the
+   four calibration points and all darts are reliably found.
+2. Repeat for all four, then run `boards.py` with all four streams and watch
+   the frame rate per board in each window for at least half an hour.
+3. Full rehearsal: server, big screen, control page, a round with the timer,
+   a correction from the control page, and a board switched to the manual
+   phone page.
+4. Photograph the camera positions so they can be reproduced on the day.
