@@ -15,10 +15,12 @@ matching `TARGETS` list in the three pages under `tournament/static/`.
 
 ## What it looks like
 
-Big screen during a round, and the grand total when time is up:
+Big screen during a round, the grand total when time is up, and the schedule
+between rounds:
 
 ![big screen during play](../images/tournament/display_boards.png)
 ![grand total](../images/tournament/display_totals.png)
+![schedule](../images/tournament/display_schedule.png)
 
 Organiser control page and the manual scoring page for one board (phone):
 
@@ -41,7 +43,10 @@ and totals. Start with `--fresh` to wipe it.
 ## Running a round
 
 1. Start the server. Note the laptop's IP address.
-2. Open `/control`, fill in the eight team names, set the round duration, save.
+2. Open `/control`. Enter the teams, one per line, and save. Press
+   `Generate round robin`: every team meets every other team once (7 rounds
+   for 8 teams on 4 boards). Lower the number of rounds to play part of it,
+   or change any match in the table and save. Set the round duration.
 3. On each board laptop run one command and leave it alone:
 
    ```
@@ -52,12 +57,14 @@ and totals. Start with `--fresh` to wipe it.
    The window shows `Waiting for round start`. (`GUI.py` still works for a
    manual setup via the menus.)
 4. Open `/` on the big screen.
-5. Press `Start round` in `/control`. All boards reset to 0 and the countdown
-   starts everywhere.
+5. Press `Start round` in `/control`. The boards get the teams of that round
+   from the schedule, reset to 0, and the countdown starts everywhere.
 6. When the timer hits zero every board shows `TIME`, stops accepting scores,
    and the big screen shows the grand total.
 7. Press `Next round` to add the round to the totals and reset the boards.
-   Rename teams per board if they rotate, then `Start round` again.
+   The next round's teams appear on the boards and the big screen shows the
+   schedule with that round highlighted until you press `Start round` again.
+   `Teams on the boards now` lets you override a match by hand.
 
 `Stop now` ends a round early. The display override in `/control` forces the
 big screen to boards or totals regardless of the timer.
