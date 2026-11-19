@@ -2,6 +2,7 @@
 from video_processing import VideoProcessing
 from game_logic import GameLogic
 from get_scores import GetScores
+from tournament.client import ScoreReporter
 
 import cv2
 import numpy as np
@@ -29,7 +30,7 @@ class GUI:
         # add widgets for selecting game type
         ttk.Label(self.menu_frame, text="Game type:").grid(column=1, row=2, sticky=W)
         self.game_type = StringVar(self.menu_frame, "x01")
-        game_type_combobox = ttk.Combobox(self.menu_frame, textvariable=self.game_type, values=["x01", "121", "cricket (not coded)"])
+        game_type_combobox = ttk.Combobox(self.menu_frame, textvariable=self.game_type, values=["x01", "triples", "121", "cricket (not coded)"])
         game_type_combobox.grid(column=2, row=2, sticky=(W, E))
         
         ttk.Label(self.menu_frame, text="Legs (first to):").grid(column=1, row=3, sticky=W)
@@ -56,7 +57,7 @@ class GUI:
         call_scores_checkbutton.grid(column=2, row=5, sticky=W)
 
         # create widget for ip webcam source
-        ttk.Label(self.menu_frame, text="Webcam IP:").grid(column=1, row=6, sticky=W)
+        ttk.Label(self.menu_frame, text="Camera (USB index or IP):").grid(column=1, row=6, sticky=W)
         self.ip = StringVar(self.menu_frame, "192.168.0.56:8080")
         ip_entry = ttk.Entry(self.menu_frame, width=15, textvariable=self.ip)
         ip_entry.grid(column=2, row=6, sticky=(W, E))
@@ -67,11 +68,27 @@ class GUI:
         demo_mode_checkbutton = ttk.Checkbutton(self.menu_frame, variable=self.demo_mode)
         demo_mode_checkbutton.grid(column=2, row=7, sticky=W)
 
+        # tournament settings (used by the 'triples' game type: 2 teams per board, central scoreboard)
+        ttk.Label(self.menu_frame, text="Board number:").grid(column=1, row=8, sticky=W)
+        self.board_number = IntVar(self.menu_frame, 1)
+        ttk.Entry(self.menu_frame, width=7, textvariable=self.board_number).grid(column=2, row=8, sticky=(W, E))
+        ttk.Label(self.menu_frame, text="Scoreboard server:").grid(column=1, row=9, sticky=W)
+        self.server_url = StringVar(self.menu_frame, "http://192.168.0.10:8000")
+        ttk.Entry(self.menu_frame, width=22, textvariable=self.server_url).grid(column=2, row=9, sticky=(W, E))
+        ttk.Label(self.menu_frame, text="Timer (min, if no server):").grid(column=1, row=10, sticky=W)
+        self.timer_minutes = DoubleVar(self.menu_frame, 10)
+        ttk.Entry(self.menu_frame, width=7, textvariable=self.timer_minutes).grid(column=2, row=10, sticky=(W, E))
+
 
         def _start_game():
             self.scorer = GameLogic(self.game_type.get(), [player.get() for player in self.player_names], self.starting_score.get(), self.legs.get(), self.call_scores.get())
+            self.reporter = None
+            if self.game_type.get() == 'triples':
+                self.reporter = ScoreReporter(self.server_url.get(), self.board_number.get(), self.timer_minutes.get() * 60)
+                self.reporter.on_round_start = lambda info: self.scorer.reset_triples()  # server started a new round: scores back to 0
+                self.reporter.start()
             self._game_screen()
-            self.video_processing.start(self, self.ip.get(), self.scorer, np.array((1200, 1600)))
+            self.video_processing.start(self, self.ip.get(), self.scorer)
 
         # use number of players to create entry boxes for player names
         def update_player_names():
@@ -97,7 +114,7 @@ class GUI:
 
         # create button to allow user to add player names
         add_player_names_button = ttk.Button(self.menu_frame, text="Next", command=update_player_names)
-        add_player_names_button.grid(column=2, row=8, sticky=W, columnspan=2)
+        add_player_names_button.grid(column=2, row=11, sticky=W, columnspan=2)
         self.root.bind("<Return>", lambda e: add_player_names_button.invoke())
         self.root.mainloop()
     
@@ -129,8 +146,10 @@ class GUI:
         s.configure('TLabel', font=('Helvetica', 9))
 
         # scorecard
-        ttk.Label(self.mainframe, text=f'Race to {self.scorer.num_legs}', font=self.heading_font).grid(column=1, row=1, sticky=W)
-        ttk.Label(self.mainframe, text="Legs", font=self.heading_font).grid(column=2, row=1, sticky=W)
+        self.triples = self.scorer.ruleset == 'triples'
+        heading = f'Board {self.board_number.get()}' if self.triples else f'Race to {self.scorer.num_legs}'
+        ttk.Label(self.mainframe, text=heading, font=self.heading_font).grid(column=1, row=1, sticky=W)
+        ttk.Label(self.mainframe, text="Target" if self.triples else "Legs", font=self.heading_font).grid(column=2, row=1, sticky=W)
         ttk.Label(self.mainframe, text="Scores", font=self.heading_font).grid(column=3, row=1, sticky=W)
         ttk.Label(self.mainframe, text="Avg", font=self.heading_font).grid(column=4, row=1, sticky=W)
         ttk.Label(self.mainframe, text="Visit", font=self.heading_font).grid(column=5, row=1, sticky=W, padx=(0, 120))
@@ -156,6 +175,10 @@ class GUI:
 
         self.visit_label = ttk.Label(self.mainframe, font=self.current_player_font)
         self.visit_label.grid(column=5, row=2, sticky=W)
+
+        self.timer_label = ttk.Label(self.mainframe, font=self.current_player_font)
+        if self.triples:
+            self.timer_label.grid(column=5, row=3, sticky=W)
         
         self.display_type = StringVar(self.mainframe, value='imageplane')
 
@@ -387,9 +410,37 @@ class GUI:
                 score = self.scorer.scores[i]
 
             self.player_name_labels[i].configure(font=font_)
-            self.leg_labels[i].configure(text=self.scorer.leg_scores[i], font=font_)
+            legs_or_target = self.scorer.current_target(i) if self.triples else self.scorer.leg_scores[i]
+            self.leg_labels[i].configure(text=legs_or_target, font=font_)
             self.score_labels[i].configure(text=score, font=font_)
             self.avg_labels[i].configure(text=int(np.round(self.scorer.averages[i])), font=font_)
+
+        if self.triples:
+            self._update_tournament()
+
+    def _update_tournament(self):
+        """Round timer and sync with the central scoreboard server."""
+        left = self.reporter.seconds_left()
+        if left is None:
+            text = 'Waiting for round start' if self.reporter.connected else 'No timer'
+        elif left <= 0:
+            text = 'TIME'
+            if not self.scorer.locked:
+                self.scorer.locked = True
+                self.video_processing.wait_for_dart_removal = True
+        else:
+            text = f'{int(left // 60):02d}:{int(left % 60):02d}'
+        if not self.reporter.connected:
+            text += '  (server offline)'
+        self.timer_label.configure(text=text)
+
+        self.reporter.state = {
+            'teams': list(self.scorer.player_names),
+            'scores': [int(x) for x in self.scorer.scores],
+            'targets': [self.scorer.current_target(i) for i in range(self.scorer.num_players)],
+            'current': int(self.scorer.current_player),
+            'source': 'camera',
+        }
 
 
     def _display_graphics(self, result, H_matrix, crop_start, crop_size, calibration_coords, dart_coords, score, remaining, fps):

@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dart Tournament</title>
+<style>
+  :root { --bg:#0b1020; --panel:#161d33; --text:#f4f6fb; --muted:#9aa4c0; --accent:#ffcc33; --green:#3ddc84; --red:#ff5a5a; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:Helvetica, Arial, sans-serif; height:100vh; display:flex; flex-direction:column; }
+  header { display:flex; justify-content:space-between; align-items:center; padding:16px 32px; border-bottom:1px solid #2a3454; }
+  header h1 { margin:0; font-size:2rem; letter-spacing:.04em; }
+  #timer { font-size:4rem; font-weight:700; font-variant-numeric:tabular-nums; color:var(--accent); }
+  #timer.finished { color:var(--red); }
+  #status { color:var(--muted); font-size:1.1rem; }
+  main { flex:1; padding:24px 32px; }
+  .boards { display:grid; grid-template-columns:repeat(2, 1fr); gap:24px; height:100%; }
+  .board { background:var(--panel); border-radius:16px; padding:20px 28px; display:flex; flex-direction:column; min-height:0; }
+  .board .teams { flex:1; display:flex; flex-direction:column; justify-content:space-evenly; }
+  .board h2 { margin:0 0 12px; color:var(--muted); font-size:1.2rem; font-weight:400; text-transform:uppercase; letter-spacing:.1em; }
+  .team { display:grid; grid-template-columns:1fr auto auto; align-items:center; gap:24px; padding:14px 0; }
+  .team + .team { border-top:1px solid #243052; }
+  .team .name { font-size:2.6rem; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .team .target { color:var(--muted); font-size:1.8rem; min-width:5ch; text-align:right; }
+  .team .score { font-size:4.2rem; font-weight:700; font-variant-numeric:tabular-nums; min-width:4ch; text-align:right; }
+  .team.active .name::before { content:'▶ '; color:var(--green); }
+  .stale { opacity:.5; }
+  .totals { height:100%; display:flex; flex-direction:column; }
+  .totals h2 { font-size:2.4rem; margin:0 0 16px; text-align:center; }
+  .totals table { width:100%; border-collapse:collapse; font-size:2.2rem; }
+  .totals td, .totals th { padding:10px 24px; border-bottom:1px solid #243052; text-align:left; }
+  .totals td.num { text-align:right; font-variant-numeric:tabular-nums; font-weight:700; }
+  .totals tr:first-child td { color:var(--accent); }
+  .offline { position:fixed; bottom:8px; right:12px; color:var(--red); font-size:.9rem; display:none; }
+  @media (max-width:900px) { .boards { grid-template-columns:1fr; height:auto; } .team .name { font-size:1.3rem; } .team .score { font-size:2rem; } #timer { font-size:2.4rem; } }
+</style>
+</head>
+<body>
+<header>
+  <div><h1>Triples Tournament</h1><div id="status"></div></div>
+  <div id="timer">--:--</div>
+</header>
+<main id="main"></main>
+<div class="offline" id="offline">no connection to server</div>
+<script>
+let snapshot = null, endsAt = null, fetchedAt = 0;
+
+function fmt(s) { s = Math.max(0, Math.round(s)); return String(Math.floor(s/60)).padStart(2,'0') + ':' + String(s%60).padStart(2,'0'); }
+
+async function poll() {
+  try {
+    const r = await fetch('/api/state'); snapshot = await r.json();
+    fetchedAt = Date.now();
+    endsAt = snapshot.round.seconds_left == null ? null : Date.now() + snapshot.round.seconds_left*1000;
+    document.getElementById('offline').style.display = 'none';
+    render();
+  } catch (e) { document.getElementById('offline').style.display = 'block'; }
+}
+
+function secondsLeft() {
+  if (!snapshot) return null;
+  if (snapshot.round.status === 'running') return endsAt == null ? null : (endsAt - Date.now())/1000;
+  if (snapshot.round.status === 'finished') return 0;
+  return null;
+}
+
+function tick() {
+  const t = document.getElementById('timer');
+  const left = secondsLeft();
+  if (!snapshot) { t.textContent = '--:--'; return; }
+  if (snapshot.round.status === 'idle') { t.textContent = fmt(snapshot.round.duration); t.className = ''; }
+  else if (left <= 0) { t.textContent = 'TIME'; t.className = 'finished'; if (snapshot.round.status === 'running') poll(); }
+  else { t.textContent = fmt(left); t.className = ''; }
+}
+
+function render() {
+  const main = document.getElementById('main');
+  const st = snapshot.round.status;
+  document.getElementById('status').textContent = `Round ${snapshot.round.number} · ` + (st === 'idle' ? 'waiting to start' : st === 'running' ? 'in play' : 'finished');
+  const mode = snapshot.display === 'auto' ? (st === 'finished' ? 'totals' : 'boards') : snapshot.display;
+  if (mode === 'totals') return renderTotals(main);
+  const now = snapshot.server_time;
+  main.innerHTML = '<div class="boards">' + Object.entries(snapshot.boards).map(([n, b]) => {
+    const stale = b.updated && (now - b.updated) > 15;
+    return `<section class="board ${stale ? 'stale' : ''}"><h2>Board ${n}${b.source === 'manual' ? ' · manual' : ''}</h2><div class="teams">` +
+      b.teams.map((team, i) => `<div class="team ${st === 'running' && b.current === i ? 'active' : ''}">
+        <div class="name">${esc(team)}</div><div class="target">${esc(b.targets[i] || '')}</div><div class="score">${b.scores[i]}</div></div>`).join('') +
+      '</div></section>';
+  }).join('') + '</div>';
+}
+
+function renderTotals(main) {
+  const rows = Object.entries(snapshot.grand_totals).sort((a, b) => b[1] - a[1]);
+  main.innerHTML = `<div class="totals"><h2>Grand total after round ${snapshot.round.number}</h2><table>` +
+    rows.map(([team, pts], i) => `<tr><td>${i+1}.</td><td>${esc(team)}</td><td class="num">${pts}</td></tr>`).join('') + '</table></div>';
+}
+
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+poll(); setInterval(poll, 1000); setInterval(tick, 250);
+</script>
+</body>
+</html>

@@ -1,6 +1,8 @@
 import numpy as np
 import pyttsx3
 
+from tournament import rules as triples_rules
+
 class GameLogic:
     def __init__(self, ruleset, player_names = ['Player 1', 'Player 2'], x01=501, num_legs=1, call_scores=True):
         self.ruleset = ruleset
@@ -16,9 +18,28 @@ class GameLogic:
         self.num_visits_history = np.zeros((self.num_players, self.num_legs*2 - 1))
         self.averages = np.zeros(self.num_players)
 
+        if self.ruleset == 'triples':
+            self.scores = [0] * self.num_players          # points climb up from 0
+            self.targets = [0] * self.num_players         # index into triples_rules.LADDER per team
+            self.locked = False                           # set when the round timer runs out
+
         self.call_scores = call_scores
         if self.call_scores:
             self.text_to_speech = pyttsx3.init()
+
+    # --- triples ruleset helpers ---------------------------------------------------
+    def current_target(self, player):
+        return triples_rules.target_label(self.targets[player])
+
+    def triples_visit_points(self, darts):
+        """Points the current team would score for these darts, without committing."""
+        return triples_rules.apply_visit(self.targets[self.current_player], darts)[0]
+
+    def reset_triples(self):
+        self.scores = [0] * self.num_players
+        self.targets = [0] * self.num_players
+        self.current_player = 0
+        self.locked = False
 
     def read_score(self, score):
         if self.call_scores:
@@ -56,7 +77,10 @@ class GameLogic:
             points += self.get_score_for_dart(dart)
         
         self.num_visits_history[self.current_player][np.sum(self.leg_scores)] += 1
-        
+
+        if self.ruleset == 'triples':
+            return self.do_checks_triples_rules(darts)
+
         self.scores[self.current_player] -= points
         
         if self.ruleset == 'x01':
@@ -94,6 +118,15 @@ class GameLogic:
             self.averages[self.current_player] = ((self.averages[self.current_player] * (num_visits-1)) / num_visits) + (points/num_visits)
             self.current_player = (self.current_player + 1) % self.num_players
 
+
+    def do_checks_triples_rules(self, darts):
+        if self.locked:
+            return
+        cp = self.current_player
+        points, self.targets[cp] = triples_rules.apply_visit(self.targets[cp], darts)
+        self.scores[cp] += points
+        self.num_dart_history[cp][0] += len(darts)
+        self.current_player = (cp + 1) % self.num_players
 
     def do_checks_121_rules(self, darts, points):
         if self.scores[self.current_player] == 0 and darts[-1][0] == 'D': # check out

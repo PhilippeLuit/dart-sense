@@ -14,6 +14,8 @@ class VideoProcessing:
 
     def _assess_visit(self, darts):
         darts = [dart for dart in darts if dart != '']
+        if self.scorer.ruleset == 'triples':
+            return self._assess_visit_triples(darts)
         score=0
         for dart in darts:
             score += self.scorer.get_score_for_dart(dart)
@@ -33,6 +35,18 @@ class VideoProcessing:
         
         return score, remaining
 
+
+    def _assess_visit_triples(self, darts):
+        score = self.scorer.triples_visit_points(darts)
+        running_total = self.scorer.scores[self.scorer.current_player] + score
+
+        if len(darts) == 3 or self.scorer.locked:
+            if self.wait_for_dart_removal == False and not self.scorer.locked:
+                self.scorer.read_score(score)
+            self.wait_for_dart_removal = True
+        else:
+            self.wait_for_dart_removal = False
+        return score, running_total
 
     def _commit_score(self):
         self.scorer.commit_score([dart for dart in self.darts_in_visit if dart != ''])
@@ -101,12 +115,23 @@ class VideoProcessing:
                         self.dart_coords_in_visit.append(best_pred)
 
 
-    def start(self, GUI, source, scorer, resolution:np.array):
+    @staticmethod
+    def resolve_source(source):
+        """'0', '1', ... -> USB/built-in camera index; a full URL is used as is;
+        anything else is treated as an IP Webcam host:port."""
+        source = str(source).strip()
+        if source.isdigit():
+            return int(source)
+        if source.startswith(('http://', 'https://', 'rtsp://')):
+            return source
+        return 'http://' + source + '/video'
+
+    def start(self, GUI, source, scorer, resolution=None):
         self.scorer = scorer
         self.num_corrections = 0
-        
-        crop_size=min(resolution)
-        crop_start = resolution/2 - crop_size/2
+
+        # resolution (width, height) is taken from the first frame, so any camera works
+        crop_size, crop_start = None, None
 
         self.dart_coords_in_visit, self.darts_in_visit = [], ['']*3
         self.user_calibration = -np.ones((6, 2))
@@ -120,12 +145,19 @@ class VideoProcessing:
         prev_frame_time = 0
         new_frame_time = 0
 
-        results = self.model('http://'+source+'/video', stream=True, verbose=False)
+        results = self.model(self.resolve_source(source), stream=True, verbose=False)
 
         for result in results:
 
             if self.game_over:
                 break
+
+            if crop_size is None:
+                height, width = result.orig_shape[:2]
+                resolution = np.array((width, height), dtype=float)
+                crop_size = min(resolution)
+                crop_start = resolution/2 - crop_size/2
+                print(f'Camera frame {width}x{height}')
             
             calibration_coords, dart_coords = self.predict.process_yolo_output(result)
             if np.count_nonzero(calibration_coords == -1)/2 > 2:

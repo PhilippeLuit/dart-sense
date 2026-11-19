@@ -11,7 +11,10 @@ A YOLOv8 object detection model was trained to detect dart positions and board c
 ## Setup
 1. Clone the repository: `git clone https://github.com/bnww/dart-sense.git`
 2. Install the required dependencies: `npm install requirements.txt`
-3. Download 'IP Webcam' on your smartphone so that you can stream video from your smartphone camera to the app for processing.
+3. Plug in a USB webcam, or download 'IP Webcam' on your smartphone so that you can stream video from your smartphone camera to the app for processing.
+
+## Tournament mode
+Four boards, eight teams, one big screen, one shared timer. See [tournament/README.md](tournament/README.md) and [tournament/HARDWARE.md](tournament/HARDWARE.md).
 
 ## Features
 - Automatic scoring works on any dart board and with any darts!
@@ -29,7 +32,7 @@ Example images fed into the YOLO Object Detection model. 'YOLO model prediction'
 
 ## Usage
 1. Run `GUI.py` to launch the app
-2. Configure your game settings. **Important: replace Webcam IP with the IP shown when you start your IP Webcam server.**<br />
+2. Configure your game settings. **Important: set Camera to the USB camera index (`0` for the first camera) or to the IP shown when you start your IP Webcam server.**<br />
 ![app set up screen](images/set_up_screen.png)
 3. Enjoy your game of darts!
 

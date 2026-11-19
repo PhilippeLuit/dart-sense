@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tournament Control</title>
+<style>
+  body { font-family:Helvetica, Arial, sans-serif; background:#f3f4f8; color:#111; margin:0; padding:16px; max-width:720px; }
+  h1 { font-size:1.4rem; } h2 { font-size:1.1rem; margin-top:24px; }
+  .row { display:flex; gap:8px; align-items:center; margin:8px 0; flex-wrap:wrap; }
+  input[type=text], input[type=number] { font-size:1rem; padding:6px 8px; border:1px solid #bbb; border-radius:6px; }
+  button { font-size:1rem; padding:10px 16px; border:0; border-radius:8px; background:#2b5cff; color:#fff; cursor:pointer; }
+  button.danger { background:#d33; } button.secondary { background:#666; }
+  .status { background:#fff; border-radius:8px; padding:12px; font-size:1.1rem; }
+  table { border-collapse:collapse; width:100%; background:#fff; } td, th { padding:6px 8px; border-bottom:1px solid #ddd; text-align:left; }
+  #msg { color:#2b5cff; min-height:1.2em; }
+</style>
+</head>
+<body>
+<h1>Tournament control</h1>
+<div class="status" id="status">loading…</div>
+
+<h2>Round</h2>
+<div class="row">
+  <label>Duration (minutes) <input type="number" id="duration" min="1" step="1" style="width:5em"></label>
+  <button onclick="startRound()">Start round</button>
+  <button class="secondary" onclick="post('/api/round/stop')">Stop now</button>
+  <button class="secondary" onclick="if(confirm('Add this round to the grand totals and reset boards?')) post('/api/round/next')">Next round</button>
+</div>
+<div class="row">
+  <label>Big screen shows:
+    <select id="display" onchange="post('/api/config', {display: this.value})">
+      <option value="auto">auto (totals when time is up)</option>
+      <option value="boards">boards</option>
+      <option value="totals">grand total</option>
+    </select></label>
+</div>
+
+<h2>Teams per board</h2>
+<div id="teams"></div>
+<div class="row"><button onclick="saveTeams()">Save team names</button> <span id="msg"></span></div>
+
+<h2>Live</h2>
+<table id="live"></table>
+
+<h2>Danger zone</h2>
+<div class="row"><button class="danger" onclick="if(confirm('Wipe all scores, totals and history?')) post('/api/reset')">Reset tournament</button></div>
+
+<script>
+let snapshot = null, built = false;
+async function post(path, data) {
+  const r = await fetch(path, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(data || {})});
+  await r.json(); refresh();
+}
+function startRound() { post('/api/round/start', {duration: Math.round(parseFloat(document.getElementById('duration').value) * 60)}); }
+async function refresh() {
+  const r = await fetch('/api/state'); snapshot = await r.json();
+  const rd = snapshot.round;
+  const left = rd.seconds_left == null ? '' : ` · ${Math.floor(rd.seconds_left/60)}:${String(Math.round(rd.seconds_left%60)).padStart(2,'0')} left`;
+  document.getElementById('status').textContent = `Round ${rd.number} · ${rd.status}${left}`;
+  if (!built) {
+    document.getElementById('duration').value = Math.round(rd.duration / 60);
+    document.getElementById('display').value = snapshot.display;
+    document.getElementById('teams').innerHTML = Object.entries(snapshot.boards).map(([n, b]) =>
+      `<div class="row">Board ${n}: <input type="text" data-board="${n}" data-i="0" value="${b.teams[0]}"> vs <input type="text" data-board="${n}" data-i="1" value="${b.teams[1]}"> <a href="/board?n=${n}" target="_blank">manual entry</a></div>`).join('');
+    built = true;
+  }
+  document.getElementById('live').innerHTML = '<tr><th>Board</th><th>Team</th><th>Target</th><th>Score</th><th>Total</th><th>Source</th></tr>' +
+    Object.entries(snapshot.boards).flatMap(([n, b]) => b.teams.map((t, i) =>
+      `<tr><td>${n}</td><td>${t}</td><td>${b.targets[i]}</td><td>${b.scores[i]}</td><td>${snapshot.grand_totals[t]}</td><td>${b.source || '-'}${b.updated ? '' : ' (never)'}</td></tr>`)).join('');
+}
+async function saveTeams() {
+  const boards = {};
+  document.querySelectorAll('#teams input').forEach(inp => { (boards[inp.dataset.board] ||= {teams: ['', '']}).teams[inp.dataset.i] = inp.value; });
+  await post('/api/config', {boards});
+  document.getElementById('msg').textContent = 'saved';
+}
+refresh(); setInterval(refresh, 2000);
+</script>
+</body>
+</html>
