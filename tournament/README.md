@@ -1,17 +1,19 @@
 # Tournament mode: 4 boards, 8 teams, one big screen
 
-Game: **triples**. Two teams per board. Each team must hit the triple of
-every number from 10 up to 20, in any order the players choose. A dart only
-counts if it is a triple of a number that team still has to do. Points per
-hit are the normal dart value (T10 = 30, T20 = 60). Teams alternate 3-dart
-visits. All four boards share one round timer. When time is up, every board locks and the big screen
+Game: **triples**. Two teams per board. Each team must complete every
+number from 10 up to 20, in any order the players choose. A number is
+complete after three hits on it: a single counts one hit, a double two, a
+triple three. Hits beyond the third on a number count for nothing. Points
+per hit are the number's value, so a completed number is always worth three
+times the number (10 = 30, 20 = 60). Teams alternate 3-dart visits. All four boards share one round timer. When time is up, every board locks and the big screen
 switches to the grand total. Grand totals accumulate over rounds, keyed by team
 name, so teams can rotate boards between rounds.
 
 Hardware recommendations are in [HARDWARE.md](HARDWARE.md).
 
-To change the numbers or the points, edit `tournament/rules.py` and the
-matching `TARGETS` list in the three pages under `tournament/static/`.
+To change the numbers, the hits needed or the points, edit
+`tournament/rules.py` and the matching `TARGETS` and `HITS_NEEDED` in the
+three pages under `tournament/static/`.
 
 ## What it looks like
 
@@ -30,11 +32,11 @@ Organiser control page and the manual scoring page for one board (phone):
 
 | Part | Where | Runs on |
 |------|-------|---------|
-| Central server | `python tournament/server.py --port 8000 --boards 4 --duration 600` | one laptop on the venue Wi-Fi |
+| Central server | `python tournament/server.py --port 8000 --boards 4 --duration 600` | any machine on the venue network |
 | Big screen | `http://<server-ip>:8000/` | TV or beamer, any browser, full screen |
-| Organiser control | `http://<server-ip>:8000/control` | organiser's phone or laptop |
-| Manual scoring | `http://<server-ip>:8000/board?n=1` | fallback if a camera fails |
-| Camera scoring | `python GUI.py`, game type `triples` | one Dart Sense instance per board |
+| Organiser control | `http://<server-ip>:8000/control` | organiser's phone or laptop: teams, schedule, rounds, corrections |
+| Manual scoring | `http://<server-ip>:8000/board?n=1` | fallback if a camera fails: one tap per hit, undo |
+| Camera scoring | `python board.py --board N ...`, or `python boards.py` for several boards on one machine | one process per board |
 
 The server only needs Python 3, no extra packages. State is saved to
 `tournament/state.json` after every change, so a restarted server keeps scores
@@ -74,13 +76,13 @@ and totals. Start with `--fresh` to wipe it.
    `Teams on the boards now` lets you override a match by hand.
 
 `Stop now` ends a round early. The display override in `/control` forces the
-big screen to boards or totals regardless of the timer.
+big screen to boards, totals or the schedule regardless of the timer.
 
 ## Corrections by the organiser
 
-The control page shows every number per team. Click a number to mark it as
-hit when a camera missed it, click again to take it back; `set` overrides the
-points. Use them when a camera missed a dart or scored the wrong one. A correction
+The control page shows every number per team with dots for the hits so far.
+One click per hit the camera missed (a double is two clicks, a triple three);
+switch to `take back` to remove hits. `set` overrides the points. Use them when a camera missed a dart or scored the wrong one. A correction
 reaches the big screen and the board app within a second: the board app
 adopts the corrected score and target and continues from there. Corrections
 also work after time is up, so a disputed result can still be fixed before
@@ -106,7 +108,12 @@ Designed for no hands at the board during play:
   2 seconds.
 - The board app reports after every change and polls the server every second.
   If the server is unreachable it keeps scoring locally using the fallback
-  timer from the setup screen, and shows `(server offline)`.
+  timer (`--timer`, or the setup screen in `GUI.py`), and shows `(server offline)`.
+- A correction made on the control page is adopted by the board app within
+  a second, so the board and the big screen never disagree.
+- Camera options: `--camera` takes a USB index, an RTSP address or an IP
+  Webcam host:port; `--width`/`--height`/`--fps` apply to USB cameras;
+  `--device mps` or `--device 0` uses a GPU; `--model` loads an exported model.
 - The server rejects score updates once the round is finished, so a late
   report cannot change the result.
 - A team that has hit all numbers shows `Klaar` and scores no more.

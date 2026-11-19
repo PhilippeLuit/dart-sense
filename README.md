@@ -10,15 +10,15 @@ A YOLOv8 object detection model was trained to detect dart positions and board c
 
 ## Setup
 1. Clone the repository: `git clone https://github.com/bnww/dart-sense.git`
-2. Install the required dependencies: `npm install requirements.txt`
-3. Plug in a USB webcam, or download 'IP Webcam' on your smartphone so that you can stream video from your smartphone camera to the app for processing.
+2. Install the dependencies (Python 3.11 or 3.12): `pip install ultralytics opencv-python pillow pyttsx3`. The `requirements.txt` file is the original Windows conda export and is kept for reference.
+3. Plug in a USB webcam, point the app at a network camera (RTSP), or download 'IP Webcam' on your smartphone so that you can stream video from your smartphone camera to the app for processing.
 
 ## Tournament mode
-Four boards, eight teams, one big screen, one shared timer. Each board runs `python board.py --board N --server URL --camera 0` and needs no further input. See [tournament/README.md](tournament/README.md) and [tournament/HARDWARE.md](tournament/HARDWARE.md).
+Four boards, eight teams, one big screen, one shared timer, a round-robin schedule and organiser corrections from a phone. Each board runs `python board.py --board N --server URL --camera 0` and needs no further input; `boards.py` runs several boards on one machine. See [tournament/README.md](tournament/README.md) and [tournament/HARDWARE.md](tournament/HARDWARE.md).
 
 ## Features
 - Automatic scoring works on any dart board and with any darts!
-- Stream from your smartphone camera
+- USB webcam, network camera (RTSP) or smartphone camera (IP Webcam)
 - Score tracking for various dart games (x01, cricket)
 - Play solo or with up to 6 friends
 - Customizable settings
@@ -50,6 +50,8 @@ Training script in `training` folder. This would need altering before attempting
 `game_logic` sets the scoring, turn-taking logic and rules for a game of darts with multiple players.
 
 `GUI.py` is the Tkinter app. It handles the graphics. This ties closely into `video_processing` which processes every frame of the video and extracts the best possible prediction for the current darts score.
+
+`board.py` starts one tournament board without menus; `boards.py` starts and supervises several boards on one machine. The `tournament` folder holds the central server, the big-screen, control and manual-scoring pages, and the rules of the tournament game.
 
 ## Methodology
 ### Data Collection and Pre-Processing

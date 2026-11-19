@@ -12,7 +12,8 @@
   button { font-size:1rem; padding:10px 16px; border:0; border-radius:8px; background:#2b5cff; color:#fff; cursor:pointer; }
   button.danger { background:#d33; } button.secondary { background:#666; }
   button.small { font-size:.9rem; padding:6px 10px; } td.fix { white-space:nowrap; }
-  button.num { font-size:.85rem; padding:4px 6px; margin:1px; background:#2a3454; } button.num.done { background:#3ddc84; color:#000; text-decoration:line-through; }
+  button.num { font-size:.85rem; padding:3px 5px; margin:1px; background:#2a3454; display:inline-flex; flex-direction:column; align-items:center; gap:2px; } button.num.done { background:#3ddc84; color:#000; }
+  button.num i { display:flex; gap:2px; height:5px; } button.num i b { width:5px; height:5px; border-radius:50%; background:#111a33; } button.num i b.on { background:#ffcc33; } button.num.done i { visibility:hidden; }
   .status { background:#fff; border-radius:8px; padding:12px; font-size:1.1rem; }
   table { border-collapse:collapse; width:100%; background:#fff; } td, th { padding:6px 8px; border-bottom:1px solid #ddd; text-align:left; }
   #schedule select { font-size:.95rem; padding:3px; }
@@ -60,7 +61,8 @@
 <div class="row"><button onclick="saveTeams()">Save team names</button> <span id="msg"></span></div>
 
 <h2>Live scores and corrections</h2>
-<p style="margin:4px 0 8px;color:#555">Click a number to mark it as hit when the camera missed it, click again to take it back. Green numbers are done. Type a score and press <b>set</b> to override the points. Corrections reach the board app and the big screen within a second, and still work after time is up.</p>
+<p style="margin:4px 0 8px;color:#555">One click per hit the camera missed: a single is one click, a double two, a triple three. Dots show hits so far, green numbers are done. Switch to <b>take back</b> to remove hits. Type a score and press <b>set</b> to override the points. Corrections reach the board app and the big screen within a second, and still work after time is up.</p>
+<div class="row"><label><input type="radio" name="mode" value="1" checked> add hit</label> <label><input type="radio" name="mode" value="-1"> take back</label></div>
 <table id="live"></table>
 
 <h2>Danger zone</h2>
@@ -72,8 +74,8 @@ async function post(path, data) {
   const r = await fetch(path, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(data || {})});
   await r.json(); refresh();
 }
-const TARGETS = [10,11,12,13,14,15,16,17,18,19,20];
-function hit(n, team, number, delta) { post(`/api/board/${n}/hit`, {team, number, delta}); }
+const TARGETS = [10,11,12,13,14,15,16,17,18,19,20], HITS_NEEDED = 3;   // keep in line with tournament/rules.py
+function hit(n, team, number) { post(`/api/board/${n}/hit`, {team, number, delta: Number(document.querySelector('input[name=mode]:checked').value)}); }
 function setScore(n, team) {
   const score = document.getElementById(`s-${n}-${team}`).value;
   if (score === '') return;
@@ -101,7 +103,8 @@ async function refresh() {
   document.getElementById('live').innerHTML = '<tr><th>Board</th><th>Team</th><th>Numbers (click to correct)</th><th>Score</th><th>Total</th><th>Source</th></tr>' +
     Object.entries(snapshot.boards).flatMap(([n, b]) => b.teams.map((t, i) =>
       `<tr><td>${n}</td><td>${t}</td>
-       <td class="fix">${TARGETS.map(num => `<button class="num ${b.targets[i].includes(num) ? '' : 'done'}" onclick="hit('${n}', ${i}, ${num}, ${b.targets[i].includes(num) ? 1 : -1})">${num}</button>`).join('')}</td>
+       <td class="fix">${TARGETS.map((num, k) => { const h = b.targets[i][k] || 0;
+         return `<button class="num ${h >= HITS_NEEDED ? 'done' : ''}" onclick="hit('${n}', ${i}, ${num})">${num}<i>${[...Array(HITS_NEEDED)].map((_, d) => `<b class="${d < h ? 'on' : ''}"></b>`).join('')}</i></button>`; }).join('')}</td>
        <td>${b.scores[i]} <input type="number" id="s-${n}-${i}" placeholder="score" style="width:5em"> <button class="small secondary" onclick="setScore('${n}', ${i})">set</button></td>
        <td>${snapshot.grand_totals[t]}</td><td>${b.source || '-'}${b.updated ? '' : ' (never)'}</td></tr>`)).join('');
 }

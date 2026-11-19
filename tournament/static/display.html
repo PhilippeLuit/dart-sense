@@ -25,8 +25,12 @@
   .team + .team { border-top:1px solid var(--lijn); }
   .team .name { grid-area:name; font-size:2.4rem; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .team .todo { grid-area:todo; display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
-  .team .todo span { font-size:1.3rem; font-weight:700; padding:2px 9px; border-radius:6px; background:#2a2a2a; color:var(--wit); font-variant-numeric:tabular-nums; }
+  .team .todo span { font-size:1.3rem; font-weight:700; padding:2px 8px 4px; border-radius:6px; background:#2a2a2a; color:var(--wit); font-variant-numeric:tabular-nums; display:inline-flex; flex-direction:column; align-items:center; line-height:1.1; }
   .team .todo span.done { background:transparent; color:#555; text-decoration:line-through; }
+  .team .todo i { display:flex; gap:3px; margin-top:3px; height:6px; }
+  .team .todo i b { width:6px; height:6px; border-radius:50%; background:#4a4a4a; }
+  .team .todo i b.on { background:var(--rood); }
+  .team .todo span.done i { visibility:hidden; }
   .team .todo .klaar { color:var(--rood); font-size:1.4rem; font-weight:800; background:transparent; padding-left:0; }
   .team .score { grid-area:score; font-size:4.2rem; font-weight:800; font-variant-numeric:tabular-nums; min-width:4ch; text-align:right; }
   .team.active .name::before { content:'▶ '; color:var(--rood); }
@@ -119,11 +123,12 @@ function renderTotals(main) {
     rows.map(([team, pts], i) => `<tr><td>${i+1}.</td><td>${esc(team)}</td><td class="num">${pts}</td></tr>`).join('') + '</table></div>';
 }
 
-const TARGETS = [10,11,12,13,14,15,16,17,18,19,20];
-function todo(remaining) {
-  remaining = Array.isArray(remaining) ? remaining : TARGETS;
-  if (remaining.length === 0) return '<span class="klaar">KLAAR</span>';
-  return TARGETS.map(n => `<span class="${remaining.includes(n) ? '' : 'done'}">${n}</span>`).join('');
+const TARGETS = [10,11,12,13,14,15,16,17,18,19,20], HITS_NEEDED = 3;   // keep in line with tournament/rules.py
+function todo(progress) {
+  progress = Array.isArray(progress) ? progress : TARGETS.map(() => 0);
+  if (progress.every(h => h >= HITS_NEEDED)) return '<span class="klaar">KLAAR</span>';
+  return TARGETS.map((n, i) => { const h = progress[i] || 0, done = h >= HITS_NEEDED;
+    return `<span class="${done ? 'done' : ''}">${n}<i>${[...Array(HITS_NEEDED)].map((_, k) => `<b class="${k < h ? 'on' : ''}"></b>`).join('')}</i></span>`; }).join('');
 }
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 

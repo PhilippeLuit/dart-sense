@@ -20,7 +20,7 @@ class GameLogic:
 
         if self.ruleset == 'triples':
             self.scores = [0] * self.num_players          # points climb up from 0
-            self.remaining = [triples_rules.fresh_remaining() for _ in range(self.num_players)]  # numbers still to hit per team
+            self.progress = [triples_rules.fresh_progress() for _ in range(self.num_players)]  # hits per number per team
             self.locked = False                           # set when the round timer runs out
 
         self.call_scores = call_scores
@@ -29,15 +29,15 @@ class GameLogic:
 
     # --- triples ruleset helpers ---------------------------------------------------
     def current_target(self, player):
-        return triples_rules.remaining_label(self.remaining[player])
+        return triples_rules.remaining_label(self.progress[player])
 
     def triples_visit_points(self, darts):
         """Points the current team would score for these darts, without committing."""
-        return triples_rules.apply_visit(self.remaining[self.current_player], darts)[0]
+        return triples_rules.apply_visit(self.progress[self.current_player], darts)[0]
 
     def reset_triples(self):
         self.scores = [0] * self.num_players
-        self.remaining = [triples_rules.fresh_remaining() for _ in range(self.num_players)]
+        self.progress = [triples_rules.fresh_progress() for _ in range(self.num_players)]
         self.current_player = 0
         self.locked = False
 
@@ -123,7 +123,7 @@ class GameLogic:
         if self.locked:
             return
         cp = self.current_player
-        points, self.remaining[cp] = triples_rules.apply_visit(self.remaining[cp], darts)
+        points, self.progress[cp] = triples_rules.apply_visit(self.progress[cp], darts)
         self.scores[cp] += points
         self.num_dart_history[cp][0] += len(darts)
         self.current_player = (cp + 1) % self.num_players

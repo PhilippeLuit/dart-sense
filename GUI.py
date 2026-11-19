@@ -452,7 +452,8 @@ class GUI:
 
     def _adopt_correction(self, board):
         self.scorer.scores = [int(x) for x in board['scores']]
-        self.scorer.remaining = [[int(n) for n in r] for r in board['targets']]
+        from tournament import rules
+        self.scorer.progress = [rules.normalise_progress(p) for p in board['targets']]
         print(f"Score corrected by organiser: {board['scores']} targets {board['targets']}")
 
     def _update_tournament(self):
@@ -479,7 +480,7 @@ class GUI:
 
         self.reporter.state = {
             'scores': [int(x) for x in self.scorer.scores],
-            'targets': [list(r) for r in self.scorer.remaining],
+            'targets': [list(p) for p in self.scorer.progress],
             'current': int(self.scorer.current_player),
             'source': 'camera',
         }

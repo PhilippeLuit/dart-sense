@@ -12,8 +12,8 @@ API (JSON):
     GET  /api/round           round info + seconds_left
     GET  /api/board/<n>       round info + that board's teams and scores (used by the board apps)
     POST /api/board/<n>       {"teams": [..], "scores": [..], "targets": [..], "current": 0}
-    POST /api/board/<n>/hit   {"team": 0, "number": 14, "delta": 1}   organiser: mark 14 as hit (+1) or not hit (-1)
-    POST /api/board/<n>/set   {"team": 0, "score": 90, "remaining": [11, 17]}   organiser: set values directly
+    POST /api/board/<n>/hit   {"team": 0, "number": 14, "delta": 1}   organiser: one hit on 14 (+1) or one taken back (-1)
+    POST /api/board/<n>/set   {"team": 0, "score": 90, "progress": [3,3,0,...]}   organiser: set values directly
     POST /api/round/start     {"duration": seconds} (optional)
     POST /api/round/stop
     POST /api/round/next      archive this round's scores into the grand totals, reset boards
@@ -47,7 +47,7 @@ state = {}
 
 def fresh_board(n):
     return {'teams': [f'Team {2*n-1}', f'Team {2*n}'], 'scores': [0, 0],
-            'targets': [rules.fresh_remaining(), rules.fresh_remaining()],   # numbers still to hit, per team
+            'targets': [rules.fresh_progress(), rules.fresh_progress()],   # hits per number (0..3), per team
             'current': 0, 'source': None, 'updated': None}
 
 
@@ -205,8 +205,8 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     if 'score' in data:
                         board['scores'][team] = max(0, int(data['score']))
-                    if 'remaining' in data:
-                        board['targets'][team] = sorted({int(n) for n in data['remaining'] if int(n) in rules.TARGETS})
+                    if 'progress' in data:
+                        board['targets'][team] = rules.normalise_progress(data['progress'])
                 board['corrected_at'] = board['updated'] = time.time()
                 return {'ok': True, 'board': board}
             if round_info()['status'] == 'finished':
@@ -214,6 +214,8 @@ class Handler(BaseHTTPRequestHandler):
             for key in ('teams', 'scores', 'targets', 'current', 'source'):
                 if key in data:
                     board[key] = data[key]
+            if 'targets' in data:
+                board['targets'] = [rules.normalise_progress(p) for p in list(data['targets'])[:2]]
             board['updated'] = time.time()
             return {'ok': True, 'round': round_info()}
         if path == '/api/round/start':
@@ -222,7 +224,7 @@ class Handler(BaseHTTPRequestHandler):
             rnd['status'] = 'running'
             apply_schedule(rnd['number'])
             for board in state['boards'].values():
-                board.update({'scores': [0, 0], 'targets': [rules.fresh_remaining(), rules.fresh_remaining()], 'current': 0})
+                board.update({'scores': [0, 0], 'targets': [rules.fresh_progress(), rules.fresh_progress()], 'current': 0})
             return round_info()
         if path == '/api/round/stop':
             if rnd['status'] == 'running':
@@ -234,7 +236,7 @@ class Handler(BaseHTTPRequestHandler):
                 for team, score in zip(board['teams'], board['scores']):
                     state['totals'][team] = state['totals'].get(team, 0) + score
                     state['history'].append({'round': rnd['number'], 'board': n, 'team': team, 'score': score})
-                board.update({'scores': [0, 0], 'targets': [rules.fresh_remaining(), rules.fresh_remaining()], 'current': 0})
+                board.update({'scores': [0, 0], 'targets': [rules.fresh_progress(), rules.fresh_progress()], 'current': 0})
             rnd.update({'number': rnd['number'] + 1, 'started_at': None, 'status': 'idle'})
             apply_schedule(rnd['number'])
             return public_state()

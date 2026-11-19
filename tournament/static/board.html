@@ -17,8 +17,11 @@
   button { font-size:1.2rem; padding:14px 18px; border:0; border-radius:10px; margin:6px 6px 0 0; cursor:pointer; }
   .next { background:#2b5cff; color:#fff; }
   .nums { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
-  .nums button { margin:0; min-width:64px; font-size:1.4rem; font-weight:700; background:#2a3454; color:#fff; }
-  .nums button.done { background:#3ddc84; color:#000; text-decoration:line-through; }
+  .nums button { margin:0; min-width:64px; font-size:1.4rem; font-weight:700; background:#2a3454; color:#fff; display:flex; flex-direction:column; align-items:center; gap:4px; }
+  .nums button.done { background:#3ddc84; color:#000; }
+  .nums i { display:flex; gap:4px; height:8px; } .nums i b { width:8px; height:8px; border-radius:50%; background:#111a33; } .nums i b.on { background:#ffcc33; }
+  .nums button.done i { visibility:hidden; }
+  .undo { background:#555; color:#fff; }
   .locked { opacity:.5; pointer-events:none; }
 </style>
 </head>
@@ -26,11 +29,12 @@
 <h1>Board <span id="n"></span> · manual scoring</h1>
 <div id="timer">--:--</div>
 <div id="teams"></div>
-<p style="color:#9aa4c0">Tap a number when the team hits its triple. Tap it again to undo. <b>Next team</b> after a 3-dart visit.</p>
+<p style="color:#9aa4c0">One tap per hit: a single is one tap, a double two, a triple three. A number is done after three hits. <b>Undo</b> takes back the last tap, <b>Next team</b> after a 3-dart visit.</p>
 <script>
 // Keep these in line with tournament/rules.py
-const TARGETS = [10,11,12,13,14,15,16,17,18,19,20];
-const points = n => n * 3;
+const TARGETS = [10,11,12,13,14,15,16,17,18,19,20], HITS_NEEDED = 3;
+const points = n => n;
+let history = [];
 
 const n = new URLSearchParams(location.search).get('n') || '1';
 document.getElementById('n').textContent = n;
@@ -41,18 +45,23 @@ async function load() {
   round = s.round; endsAt = round.seconds_left == null ? null : Date.now() + round.seconds_left * 1000;
   const b = s.boards[n];
   if (!board || board.roundStart !== round.started_at) {
-    board = {teams: b.teams, scores: b.scores.slice(), remaining: b.targets.map(r => r.slice()), current: b.current, roundStart: round.started_at};
+    board = {teams: b.teams, scores: b.scores.slice(), progress: b.targets.map(r => r.slice()), current: b.current, roundStart: round.started_at};
+    history = [];
   } else { board.teams = b.teams; }
   render();
 }
 async function push() {
   await fetch('/api/board/' + n, {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({teams: board.teams, scores: board.scores, targets: board.remaining, current: board.current, source: 'manual'})});
+    body: JSON.stringify({teams: board.teams, scores: board.scores, targets: board.progress, current: board.current, source: 'manual'})});
 }
-function toggle(i, num) {
-  const r = board.remaining[i];
-  if (r.includes(num)) { board.remaining[i] = r.filter(x => x !== num); board.scores[i] += points(num); }
-  else { r.push(num); r.sort((a, b) => a - b); board.scores[i] = Math.max(0, board.scores[i] - points(num)); }
+function tap(i, idx) {
+  if (board.progress[i][idx] >= HITS_NEEDED) return;
+  board.progress[i][idx] += 1; board.scores[i] += points(TARGETS[idx]); history.push([i, idx]);
+  render(); push();
+}
+function undo() {
+  const h = history.pop(); if (!h) return;
+  board.progress[h[0]][h[1]] -= 1; board.scores[h[0]] = Math.max(0, board.scores[h[0]] - points(TARGETS[h[1]]));
   render(); push();
 }
 function next() { board.current = (board.current + 1) % 2; render(); push(); }
@@ -60,10 +69,11 @@ function render() {
   const locked = round && round.status === 'finished';
   document.getElementById('teams').innerHTML = board.teams.map((t, i) => `
     <div class="team ${board.current === i ? 'active' : ''} ${locked ? 'locked' : ''}">
-      <div class="name">${t}</div><div class="target">${board.remaining[i].length ? 'still to hit: ' + board.remaining[i].join(' ') : 'all done'}</div><div class="score">${board.scores[i]}</div>
-      <div class="nums">${TARGETS.map(num => `<button class="${board.remaining[i].includes(num) ? '' : 'done'}" onclick="toggle(${i}, ${num})">${num}</button>`).join('')}</div>
+      <div class="name">${t}</div><div class="target">${board.progress[i].every(h => h >= HITS_NEEDED) ? 'all done' : 'open: ' + TARGETS.filter((n, k) => board.progress[i][k] < HITS_NEEDED).join(' ')}</div><div class="score">${board.scores[i]}</div>
+      <div class="nums">${TARGETS.map((num, idx) => { const h = board.progress[i][idx];
+        return `<button class="${h >= HITS_NEEDED ? 'done' : ''}" onclick="tap(${i}, ${idx})">${num}<i>${[...Array(HITS_NEEDED)].map((_, k) => `<b class="${k < h ? 'on' : ''}"></b>`).join('')}</i></button>`; }).join('')}</div>
     </div>`).join('') +
-    `<div class="${locked ? 'locked' : ''}"><button class="next" onclick="next()">Next team</button></div>`;
+    `<div class="${locked ? 'locked' : ''}"><button class="next" onclick="next()">Next team</button><button class="undo" onclick="undo()">Undo</button></div>`;
 }
 function tick() {
   const t = document.getElementById('timer');
