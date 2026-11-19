@@ -1,7 +1,10 @@
 from ultralytics import YOLO
 from get_scores import GetScores
 
+import cv2
 import numpy as np
+import sys
+import threading
 import time
 
 class VideoProcessing:
@@ -9,6 +12,10 @@ class VideoProcessing:
         self.model = YOLO(model_dir)
         self.predict = GetScores(model_dir)
         self.device = device  # None = ultralytics default (CPU), 'mps' = Apple GPU, '0' = first CUDA GPU
+        # USB cameras are opened by us so the resolution is under control; webcams otherwise
+        # often deliver 640x480, which is too little for dart tips.
+        self.camera_size = (1920, 1080)
+        self.camera_fps = 30
         # a visit with fewer than 3 detected darts (bounce-out, missed dart) commits by itself
         # once no dart has been seen on the board for this long. None disables it.
         self.auto_commit_seconds = auto_commit_seconds
@@ -140,6 +147,51 @@ class VideoProcessing:
             return source
         return 'http://' + source + '/video'
 
+    def _usb_results(self, index, predict_kwargs):
+        """Open a USB/built-in camera at the configured size and yield one YOLO result per
+        fresh frame. A reader thread always keeps the latest frame, so inference that is
+        slower than the camera never builds up a delay."""
+        backend = cv2.CAP_DSHOW if sys.platform == 'win32' else cv2.CAP_ANY
+        cap = cv2.VideoCapture(index, backend)
+        if not cap.isOpened():
+            raise RuntimeError(f'camera {index} could not be opened')
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))   # compressed: several cameras fit on one USB bus
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.camera_size[0])
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.camera_size[1])
+        cap.set(cv2.CAP_PROP_FPS, self.camera_fps)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        got = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+        if got != tuple(self.camera_size):
+            print(f'Camera {index}: asked for {self.camera_size[0]}x{self.camera_size[1]}, got {got[0]}x{got[1]}')
+
+        latest = {'seq': 0, 'frame': None, 'error': None}
+        stop = threading.Event()
+
+        def reader():
+            while not stop.is_set():
+                ok, frame = cap.read()
+                if not ok:
+                    latest['error'] = 'camera read failed'
+                    break
+                latest['frame'], latest['seq'] = frame, latest['seq'] + 1
+        thread = threading.Thread(target=reader, daemon=True)
+        thread.start()
+
+        try:
+            seen = 0
+            while True:
+                if latest['error']:
+                    raise RuntimeError(f'camera {index}: {latest["error"]}')
+                if latest['seq'] == seen:
+                    time.sleep(0.002)
+                    continue
+                seen, frame = latest['seq'], latest['frame']
+                yield self.model.predict(frame, verbose=False, **predict_kwargs)[0]
+        finally:
+            stop.set()
+            thread.join(timeout=2)
+            cap.release()
+
     def start(self, GUI, source, scorer, resolution=None):
         self.scorer = scorer
         self.num_corrections = 0
@@ -161,7 +213,11 @@ class VideoProcessing:
         new_frame_time = 0
 
         kwargs = {'device': self.device} if self.device else {}
-        results = self.model(self.resolve_source(source), stream=True, verbose=False, **kwargs)
+        resolved = self.resolve_source(source)
+        if isinstance(resolved, int):
+            results = self._usb_results(resolved, kwargs)
+        else:
+            results = self.model(resolved, stream=True, verbose=False, **kwargs)
 
         for result in results:
 

@@ -57,7 +57,8 @@ and totals. Start with `--fresh` to wipe it.
    The window shows `Waiting for round start`. (`GUI.py` still works for a
    manual setup via the menus.) To run several boards on one machine, for
    example with network cameras, use `boards.py`, which starts one process
-   per camera and restarts a board that crashes:
+   per camera and restarts a board that crashes (USB cameras are opened at
+   1920x1080 in MJPEG mode; change with `--width`, `--height`, `--fps`):
 
    ```
    python boards.py --server http://192.168.0.10:8000 --cameras rtsp://cam1/stream1 rtsp://cam2/stream1

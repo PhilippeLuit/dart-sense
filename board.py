@@ -23,10 +23,15 @@ def main():
                         help='seconds the board must be empty before a visit with fewer than 3 darts commits; 0 disables')
     parser.add_argument('--model', default='weights.pt', help='weights.pt, or an exported model such as weights_ncnn_model or weights_openvino_model')
     parser.add_argument('--device', default=None, help="inference device: leave empty for CPU, 'mps' for an Apple GPU, '0' for an NVIDIA GPU")
+    parser.add_argument('--width', type=int, default=1920, help='USB camera width (ignored for network cameras)')
+    parser.add_argument('--height', type=int, default=1080, help='USB camera height')
+    parser.add_argument('--fps', type=int, default=30, help='USB camera frame rate to request')
     args = parser.parse_args()
 
     app = GUI(args.model, args.device)
     app.video_processing.auto_commit_seconds = args.auto_commit or None
+    app.video_processing.camera_size = (args.width, args.height)
+    app.video_processing.camera_fps = args.fps
     app.start_tournament_board(args.board, args.server, args.camera, args.timer)
 
 

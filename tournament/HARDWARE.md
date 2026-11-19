@@ -1,7 +1,42 @@
 # Hardware setup for a 4-board tournament
 
-Chosen setup: **four PoE IP cameras, one MacBook running all four boards, a
-second Mac as server and big screen.**
+Two setups that work. Pick the one that fits the room.
+
+**A. Four USB webcams on one gaming PC** (i9 / RTX 3080 class). Everything on
+one machine: four boards, the server and the big screen on the TV. No screens
+at the boards; players watch the big screen, the organiser corrects from a
+phone. See *USB webcams on one PC* below.
+
+**B. Four PoE IP cameras, one MacBook for the boards, a second Mac as server
+and big screen.** No cable-length limit, cameras anywhere in the room.
+
+## USB webcams on one PC
+
+- Any recent desktop handles four streams. With an NVIDIA GPU use
+  `--device 0`; the CPU alone is also enough.
+- The app opens USB cameras itself at a fixed resolution in MJPEG mode
+  (default 1920x1080 at 30 fps, change with `--width`, `--height`, `--fps`).
+  Without that, webcams often deliver 640x480, which is too little.
+- Spread the cameras over different USB controllers (front and back ports),
+  or use two powered USB 3 hubs. Four 1080p MJPEG streams on one USB 2 hub
+  do not fit.
+- USB cables: 3 to 5 m passive, longer only with active extension cables.
+- Camera numbers can change after a reboot. Check at start which window
+  shows which board, or plug the cameras in always in the same order.
+- Start everything on the PC:
+
+  ```
+  python tournament/server.py --port 8000 --boards 4 --duration 600
+  python boards.py --server http://localhost:8000 --cameras 0 1 2 3 --device 0
+  ```
+
+  Big screen: a browser in full screen on `http://localhost:8000/` on the
+  TV output. Organiser: `http://<pc-ip>:8000/control` on a phone.
+- Windows: Python 3.11 or 3.12 from python.org (Tk included), PyTorch with
+  CUDA per the ultralytics install notes, then `pip install ultralytics
+  opencv-python pillow`.
+
+## PoE IP cameras and a MacBook
 
 ```
  PoE camera bord 1 ─┐
