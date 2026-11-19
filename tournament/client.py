@@ -20,8 +20,10 @@ class ScoreReporter(threading.Thread):
         self.round = {}              # last round info from the server
         self.round_ends_at = None    # local clock time at which the round ends
         self.round_started_at = None
+        self.teams = None            # team names as set on the organiser's control page
         self.local_ends_at = time.time() + local_duration_s if local_duration_s else None
         self.on_round_start = None   # callback(round_info) invoked when a new round starts
+        self.on_remote_change = None # callback(board) when the organiser corrected this board's score
 
     # --- called from the GUI thread -------------------------------------------------
     def seconds_left(self):
@@ -59,7 +61,9 @@ class ScoreReporter(threading.Thread):
             return json.loads(resp.read().decode())
 
     def _poll_round(self):
-        info = self._request('/api/round')
+        reply = self._request(f'/api/board/{self.board}')
+        info = reply['round']
+        self.teams = list(reply['board'].get('teams') or []) or None
         previous_start = self.round.get('started_at')
         self.round = info
         if info.get('status') == 'running' and info.get('seconds_left') is not None:
@@ -69,6 +73,12 @@ class ScoreReporter(threading.Thread):
         if info.get('started_at') and info.get('started_at') != previous_start and self.on_round_start:
             self._last_sent = None
             self.on_round_start(info)
+            return
+        board = reply['board']
+        if self._last_sent and self.on_remote_change and (
+                board.get('scores') != self._last_sent.get('scores') or board.get('targets') != self._last_sent.get('targets')):
+            self.state, self._last_sent = None, None   # take the server's version, re-send once the GUI has caught up
+            self.on_remote_change(board)
 
     def _post_state(self):
         payload = dict(self.state)

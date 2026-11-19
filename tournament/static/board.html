@@ -13,9 +13,12 @@
   .team { background:#161d33; border-radius:12px; padding:16px; margin:12px 0; }
   .team.active { outline:3px solid #3ddc84; }
   .name { font-size:1.5rem; font-weight:600; } .score { font-size:2.5rem; font-weight:700; }
-  .target { color:#9aa4c0; font-size:1.2rem; }
+  .target { color:#9aa4c0; font-size:1rem; }
   button { font-size:1.2rem; padding:14px 18px; border:0; border-radius:10px; margin:6px 6px 0 0; cursor:pointer; }
-  .hit { background:#3ddc84; color:#000; } .next { background:#2b5cff; color:#fff; } .undo { background:#555; color:#fff; }
+  .next { background:#2b5cff; color:#fff; }
+  .nums { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+  .nums button { margin:0; min-width:64px; font-size:1.4rem; font-weight:700; background:#2a3454; color:#fff; }
+  .nums button.done { background:#3ddc84; color:#000; text-decoration:line-through; }
   .locked { opacity:.5; pointer-events:none; }
 </style>
 </head>
@@ -23,44 +26,44 @@
 <h1>Board <span id="n"></span> · manual scoring</h1>
 <div id="timer">--:--</div>
 <div id="teams"></div>
-<p style="color:#9aa4c0">Press <b>Hit</b> each time the team hits its current target, <b>Next team</b> after a 3-dart visit. Undo reverts the last hit.</p>
+<p style="color:#9aa4c0">Tap a number when the team hits its triple. Tap it again to undo. <b>Next team</b> after a 3-dart visit.</p>
 <script>
-// Keep this ladder identical to tournament/rules.py
-const LADDER = [10,11,12,13,14,15,16,17,18,19,20,'B'];
-const label = i => i >= LADDER.length ? 'Done' : (LADDER[i] === 'B' ? 'Bull' : 'T' + LADDER[i]);
-const points = i => LADDER[i] === 'B' ? 50 : LADDER[i] * 3;
+// Keep these in line with tournament/rules.py
+const TARGETS = [10,11,12,13,14,15,16,17,18,19,20];
+const points = n => n * 3;
 
 const n = new URLSearchParams(location.search).get('n') || '1';
 document.getElementById('n').textContent = n;
-let board = null, idx = [0, 0], history = [], round = null, endsAt = null;
+let board = null, round = null, endsAt = null;
 
 async function load() {
   const r = await fetch('/api/state'); const s = await r.json();
   round = s.round; endsAt = round.seconds_left == null ? null : Date.now() + round.seconds_left * 1000;
   const b = s.boards[n];
   if (!board || board.roundStart !== round.started_at) {
-    board = {teams: b.teams, scores: b.scores.slice(), current: b.current, roundStart: round.started_at};
-    idx = b.targets.map(t => Math.max(0, LADDER.findIndex(x => (x === 'B' ? 'Bull' : 'T' + x) === t)));
-    b.targets.forEach((t, i) => { if (t === 'Done') idx[i] = LADDER.length; });
-    history = [];
+    board = {teams: b.teams, scores: b.scores.slice(), remaining: b.targets.map(r => r.slice()), current: b.current, roundStart: round.started_at};
   } else { board.teams = b.teams; }
   render();
 }
 async function push() {
   await fetch('/api/board/' + n, {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({teams: board.teams, scores: board.scores, targets: idx.map(label), current: board.current, source: 'manual'})});
+    body: JSON.stringify({teams: board.teams, scores: board.scores, targets: board.remaining, current: board.current, source: 'manual'})});
 }
-function hit(i) { if (idx[i] >= LADDER.length) return; history.push([i, points(idx[i])]); board.scores[i] += points(idx[i]); idx[i]++; render(); push(); }
-function undo() { const h = history.pop(); if (!h) return; idx[h[0]]--; board.scores[h[0]] -= h[1]; render(); push(); }
+function toggle(i, num) {
+  const r = board.remaining[i];
+  if (r.includes(num)) { board.remaining[i] = r.filter(x => x !== num); board.scores[i] += points(num); }
+  else { r.push(num); r.sort((a, b) => a - b); board.scores[i] = Math.max(0, board.scores[i] - points(num)); }
+  render(); push();
+}
 function next() { board.current = (board.current + 1) % 2; render(); push(); }
 function render() {
   const locked = round && round.status === 'finished';
   document.getElementById('teams').innerHTML = board.teams.map((t, i) => `
     <div class="team ${board.current === i ? 'active' : ''} ${locked ? 'locked' : ''}">
-      <div class="name">${t}</div><div class="target">target ${label(idx[i])}</div><div class="score">${board.scores[i]}</div>
-      <button class="hit" onclick="hit(${i})">Hit ${label(idx[i])}</button>
+      <div class="name">${t}</div><div class="target">${board.remaining[i].length ? 'still to hit: ' + board.remaining[i].join(' ') : 'all done'}</div><div class="score">${board.scores[i]}</div>
+      <div class="nums">${TARGETS.map(num => `<button class="${board.remaining[i].includes(num) ? '' : 'done'}" onclick="toggle(${i}, ${num})">${num}</button>`).join('')}</div>
     </div>`).join('') +
-    `<div class="${locked ? 'locked' : ''}"><button class="next" onclick="next()">Next team</button><button class="undo" onclick="undo()">Undo</button></div>`;
+    `<div class="${locked ? 'locked' : ''}"><button class="next" onclick="next()">Next team</button></div>`;
 }
 function tick() {
   const t = document.getElementById('timer');

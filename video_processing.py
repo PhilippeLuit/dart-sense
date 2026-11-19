@@ -5,9 +5,13 @@ import numpy as np
 import time
 
 class VideoProcessing:
-    def __init__(self, model_dir="weights.pt"):
+    def __init__(self, model_dir="weights.pt", auto_commit_seconds=3.0):
         self.model = YOLO(model_dir)
         self.predict = GetScores(model_dir)
+        # a visit with fewer than 3 detected darts (bounce-out, missed dart) commits by itself
+        # once no dart has been seen on the board for this long. None disables it.
+        self.auto_commit_seconds = auto_commit_seconds
+        self.last_dart_seen = None
     
     def _distance(self, coord1, coord2):
         return np.sqrt(np.sum((coord1 - coord2) ** 2))
@@ -55,6 +59,7 @@ class VideoProcessing:
         self.wait_for_dart_removal = False
         self.pred_queue = -np.ones((5,3,2))
         self.pred_queue_count = 0
+        self.last_dart_seen = None
 
 
     def _adjust_coords(self, calibration_coords, dart_coords, resolution, crop_start, crop_size):
@@ -74,6 +79,7 @@ class VideoProcessing:
         if len(transformed_dart_coords) == 0:
             self.pred_queue[self.pred_queue_count % 5] = -np.ones((3, 2))
         else:
+            self.last_dart_seen = time.time()
             self.pred_queue[self.pred_queue_count % 5] = np.vstack((transformed_dart_coords, -np.ones((3-len(transformed_dart_coords), 2)))) # add [-1, -1] to fill any spaces when < 3 darts
         self.pred_queue_count += 1
 
@@ -85,6 +91,13 @@ class VideoProcessing:
             if count >= repeat_threshold:
                 self._commit_score()
         
+        elif (self.auto_commit_seconds and len(self.dart_coords_in_visit) > 0 and self.last_dart_seen
+              and np.all(self.pred_queue == -1) and time.time() - self.last_dart_seen > self.auto_commit_seconds):
+            # darts were thrown and have since been pulled without reaching 3: commit what we saw
+            self.scorer.read_score(self.scorer.triples_visit_points(self.darts_in_visit) if self.scorer.ruleset == 'triples'
+                                   else sum(self.scorer.get_score_for_dart(d) for d in self.darts_in_visit if d))
+            self._commit_score()
+
         elif self.darts_in_visit.count('') > 0:
             # check based on number of darts in visit and if the dart has been scored before
             unique_predictions = np.unique(self.pred_queue[self.pred_queue != -1].reshape(-1,2), axis=0)
@@ -136,6 +149,7 @@ class VideoProcessing:
         self.dart_coords_in_visit, self.darts_in_visit = [], ['']*3
         self.user_calibration = -np.ones((6, 2))
         self.wait_for_dart_removal = False
+        self.last_dart_seen = None
         self.game_over = False
 
         self.pred_queue = -np.ones((5,3,2)) # implement FIFO queue to store the last 5 frames' predictions

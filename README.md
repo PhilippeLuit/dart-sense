@@ -14,7 +14,7 @@ A YOLOv8 object detection model was trained to detect dart positions and board c
 3. Plug in a USB webcam, or download 'IP Webcam' on your smartphone so that you can stream video from your smartphone camera to the app for processing.
 
 ## Tournament mode
-Four boards, eight teams, one big screen, one shared timer. See [tournament/README.md](tournament/README.md) and [tournament/HARDWARE.md](tournament/HARDWARE.md).
+Four boards, eight teams, one big screen, one shared timer. Each board runs `python board.py --board N --server URL --camera 0` and needs no further input. See [tournament/README.md](tournament/README.md) and [tournament/HARDWARE.md](tournament/HARDWARE.md).
 
 ## Features
 - Automatic scoring works on any dart board and with any darts!

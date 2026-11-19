@@ -11,8 +11,11 @@
   input[type=text], input[type=number] { font-size:1rem; padding:6px 8px; border:1px solid #bbb; border-radius:6px; }
   button { font-size:1rem; padding:10px 16px; border:0; border-radius:8px; background:#2b5cff; color:#fff; cursor:pointer; }
   button.danger { background:#d33; } button.secondary { background:#666; }
+  button.small { font-size:.9rem; padding:6px 10px; } td.fix { white-space:nowrap; }
+  button.num { font-size:.85rem; padding:4px 6px; margin:1px; background:#2a3454; } button.num.done { background:#3ddc84; color:#000; text-decoration:line-through; }
   .status { background:#fff; border-radius:8px; padding:12px; font-size:1.1rem; }
   table { border-collapse:collapse; width:100%; background:#fff; } td, th { padding:6px 8px; border-bottom:1px solid #ddd; text-align:left; }
+  #schedule select { font-size:.95rem; padding:3px; }
   #msg { color:#2b5cff; min-height:1.2em; }
 </style>
 </head>
@@ -33,14 +36,31 @@
       <option value="auto">auto (totals when time is up)</option>
       <option value="boards">boards</option>
       <option value="totals">grand total</option>
+      <option value="schedule">schedule</option>
     </select></label>
 </div>
 
-<h2>Teams per board</h2>
+<h2>Teams</h2>
+<p style="margin:4px 0;color:#555">One team per line.</p>
+<textarea id="teamlist" rows="9" style="width:100%;max-width:420px;font-size:1rem;padding:6px"></textarea>
+<div class="row"><button onclick="saveTeamList()">Save teams</button> <span id="teammsg"></span></div>
+
+<h2>Schedule</h2>
+<div class="row">
+  <label>Rounds <input type="number" id="rounds" min="1" step="1" style="width:4em"></label>
+  <button onclick="generate()">Generate round robin</button>
+  <button class="secondary" onclick="saveSchedule()">Save edited schedule</button>
+  <span id="schedmsg"></span>
+</div>
+<p style="margin:4px 0;color:#555">Every team plays every other team once in a full round robin (7 rounds for 8 teams). Set fewer rounds to play only part of it. You can change any match below before saving. On <b>Start round</b> the boards get the teams of that round.</p>
+<table id="schedule"></table>
+
+<h2>Teams on the boards now</h2>
 <div id="teams"></div>
 <div class="row"><button onclick="saveTeams()">Save team names</button> <span id="msg"></span></div>
 
-<h2>Live</h2>
+<h2>Live scores and corrections</h2>
+<p style="margin:4px 0 8px;color:#555">Click a number to mark it as hit when the camera missed it, click again to take it back. Green numbers are done. Type a score and press <b>set</b> to override the points. Corrections reach the board app and the big screen within a second, and still work after time is up.</p>
 <table id="live"></table>
 
 <h2>Danger zone</h2>
@@ -52,6 +72,13 @@ async function post(path, data) {
   const r = await fetch(path, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(data || {})});
   await r.json(); refresh();
 }
+const TARGETS = [10,11,12,13,14,15,16,17,18,19,20];
+function hit(n, team, number, delta) { post(`/api/board/${n}/hit`, {team, number, delta}); }
+function setScore(n, team) {
+  const score = document.getElementById(`s-${n}-${team}`).value;
+  if (score === '') return;
+  post(`/api/board/${n}/set`, {team, score: Number(score)});
+}
 function startRound() { post('/api/round/start', {duration: Math.round(parseFloat(document.getElementById('duration').value) * 60)}); }
 async function refresh() {
   const r = await fetch('/api/state'); snapshot = await r.json();
@@ -61,13 +88,53 @@ async function refresh() {
   if (!built) {
     document.getElementById('duration').value = Math.round(rd.duration / 60);
     document.getElementById('display').value = snapshot.display;
-    document.getElementById('teams').innerHTML = Object.entries(snapshot.boards).map(([n, b]) =>
-      `<div class="row">Board ${n}: <input type="text" data-board="${n}" data-i="0" value="${b.teams[0]}"> vs <input type="text" data-board="${n}" data-i="1" value="${b.teams[1]}"> <a href="/board?n=${n}" target="_blank">manual entry</a></div>`).join('');
+    document.getElementById('teamlist').value = (snapshot.teams || []).join('\n');
+    document.getElementById('rounds').value = (snapshot.schedule || []).length || Math.max(1, (snapshot.teams || []).length - 1);
+    renderSchedule();
     built = true;
   }
-  document.getElementById('live').innerHTML = '<tr><th>Board</th><th>Team</th><th>Target</th><th>Score</th><th>Total</th><th>Source</th></tr>' +
+  if (!document.activeElement || !document.activeElement.closest('#teams')) {
+    document.getElementById('teams').innerHTML = Object.entries(snapshot.boards).map(([n, b]) =>
+      `<div class="row">Board ${n}: <input type="text" data-board="${n}" data-i="0" value="${esc(b.teams[0])}"> vs <input type="text" data-board="${n}" data-i="1" value="${esc(b.teams[1])}"> <a href="/board?n=${n}" target="_blank">manual entry</a></div>`).join('');
+  }
+  if (document.activeElement && document.activeElement.closest('#live')) return;  // don't wipe a value being typed
+  document.getElementById('live').innerHTML = '<tr><th>Board</th><th>Team</th><th>Numbers (click to correct)</th><th>Score</th><th>Total</th><th>Source</th></tr>' +
     Object.entries(snapshot.boards).flatMap(([n, b]) => b.teams.map((t, i) =>
-      `<tr><td>${n}</td><td>${t}</td><td>${b.targets[i]}</td><td>${b.scores[i]}</td><td>${snapshot.grand_totals[t]}</td><td>${b.source || '-'}${b.updated ? '' : ' (never)'}</td></tr>`)).join('');
+      `<tr><td>${n}</td><td>${t}</td>
+       <td class="fix">${TARGETS.map(num => `<button class="num ${b.targets[i].includes(num) ? '' : 'done'}" onclick="hit('${n}', ${i}, ${num}, ${b.targets[i].includes(num) ? 1 : -1})">${num}</button>`).join('')}</td>
+       <td>${b.scores[i]} <input type="number" id="s-${n}-${i}" placeholder="score" style="width:5em"> <button class="small secondary" onclick="setScore('${n}', ${i})">set</button></td>
+       <td>${snapshot.grand_totals[t]}</td><td>${b.source || '-'}${b.updated ? '' : ' (never)'}</td></tr>`)).join('');
+}
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+async function saveTeamList() {
+  const teams = document.getElementById('teamlist').value.split('\n').map(t => t.trim()).filter(Boolean);
+  await post('/api/teams', {teams});
+  document.getElementById('teammsg').textContent = `${teams.length} teams saved`;
+  built = false;
+}
+async function generate() {
+  const r = await fetch('/api/schedule/generate', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({rounds: Number(document.getElementById('rounds').value)})});
+  const res = await r.json();
+  document.getElementById('schedmsg').textContent = res.ok === false ? res.reason : 'schedule generated';
+  built = false; refresh();
+}
+function renderSchedule() {
+  const sched = snapshot.schedule || [], boards = Object.keys(snapshot.boards), teams = snapshot.teams || [];
+  if (!sched.length) { document.getElementById('schedule').innerHTML = '<tr><td style="color:#777">no schedule yet</td></tr>'; return; }
+  const opts = sel => ['<option value="">-</option>'].concat(teams.map(t => `<option ${t === sel ? 'selected' : ''}>${esc(t)}</option>`)).join('');
+  document.getElementById('schedule').innerHTML = '<tr><th>Round</th>' + boards.map(b => `<th>Board ${b}</th>`).join('') + '</tr>' +
+    sched.map((matches, r) => `<tr ${r + 1 === snapshot.round.number ? 'style="background:#fff7d6"' : ''}><td>${r + 1}</td>` + boards.map((b, i) => {
+      const m = matches[i] || ['', ''];
+      return `<td><select data-r="${r}" data-b="${i}" data-side="0">${opts(m[0])}</select> vs <select data-r="${r}" data-b="${i}" data-side="1">${opts(m[1])}</select></td>`;
+    }).join('') + '</tr>').join('');
+}
+async function saveSchedule() {
+  const sched = (snapshot.schedule || []).map(() => []);
+  document.querySelectorAll('#schedule select').forEach(sel => {
+    const r = +sel.dataset.r, b = +sel.dataset.b; (sched[r][b] ||= ['', ''])[+sel.dataset.side] = sel.value;
+  });
+  await post('/api/schedule', {schedule: sched.map(ms => ms.filter(m => m && m[0] && m[1]))});
+  document.getElementById('schedmsg').textContent = 'schedule saved'; built = false; refresh();
 }
 async function saveTeams() {
   const boards = {};

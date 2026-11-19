@@ -4,6 +4,8 @@ from game_logic import GameLogic
 from get_scores import GetScores
 from tournament.client import ScoreReporter
 
+import time
+
 import cv2
 import numpy as np
 import os
@@ -80,15 +82,7 @@ class GUI:
         ttk.Entry(self.menu_frame, width=7, textvariable=self.timer_minutes).grid(column=2, row=10, sticky=(W, E))
 
 
-        def _start_game():
-            self.scorer = GameLogic(self.game_type.get(), [player.get() for player in self.player_names], self.starting_score.get(), self.legs.get(), self.call_scores.get())
-            self.reporter = None
-            if self.game_type.get() == 'triples':
-                self.reporter = ScoreReporter(self.server_url.get(), self.board_number.get(), self.timer_minutes.get() * 60)
-                self.reporter.on_round_start = lambda info: self.scorer.reset_triples()  # server started a new round: scores back to 0
-                self.reporter.start()
-            self._game_screen()
-            self.video_processing.start(self, self.ip.get(), self.scorer)
+        _start_game = self.start_game
 
         # use number of players to create entry boxes for player names
         def update_player_names():
@@ -118,6 +112,44 @@ class GUI:
         self.root.bind("<Return>", lambda e: add_player_names_button.invoke())
         self.root.mainloop()
     
+
+    def start_game(self):
+        self.scorer = GameLogic(self.game_type.get(), [player.get() for player in self.player_names], self.starting_score.get(), self.legs.get(), self.call_scores.get())
+        self.reporter = None
+        if self.game_type.get() == 'triples':
+            self.reporter = ScoreReporter(self.server_url.get(), self.board_number.get(), self.timer_minutes.get() * 60)
+            self.reporter.on_round_start = lambda info: self.scorer.reset_triples()  # server started a new round: scores back to 0
+            self.reporter.on_remote_change = self._adopt_correction  # organiser corrected the score on the control page
+            self.reporter.start()
+        self._game_screen()
+
+        while True:
+            try:
+                self.video_processing.start(self, self.ip.get(), self.scorer)
+            except TclError:
+                return  # window closed
+            except Exception as e:  # camera dropped, network hiccup: keep the game state and reconnect
+                print(f'Camera error: {e}')
+            if not self.triples:
+                return
+            print('Camera stream ended, reconnecting in 2 s')
+            try:
+                self.timer_label.configure(text='Camera lost, reconnecting...')
+                self.root.update()
+            except TclError:
+                return
+            time.sleep(2)
+
+    def start_tournament_board(self, board, server, camera, timer_minutes=10, teams=('Team A', 'Team B')):
+        """Skip the menus: straight into a triples game for one board. Used by board.py."""
+        self.game_type = StringVar(self.root, 'triples')
+        self.starting_score, self.legs = IntVar(self.root, 0), IntVar(self.root, 1)
+        self.call_scores, self.demo_mode = BooleanVar(self.root, False), BooleanVar(self.root, False)
+        self.board_number, self.server_url = IntVar(self.root, board), StringVar(self.root, server)
+        self.ip, self.timer_minutes = StringVar(self.root, str(camera)), DoubleVar(self.root, timer_minutes)
+        self.player_names = [StringVar(self.root, name) for name in teams]
+        self.player_frame = ttk.Frame(self.root)
+        self.start_game()
 
     def _game_screen(self):
         self.player_frame.destroy()
@@ -149,7 +181,7 @@ class GUI:
         self.triples = self.scorer.ruleset == 'triples'
         heading = f'Board {self.board_number.get()}' if self.triples else f'Race to {self.scorer.num_legs}'
         ttk.Label(self.mainframe, text=heading, font=self.heading_font).grid(column=1, row=1, sticky=W)
-        ttk.Label(self.mainframe, text="Target" if self.triples else "Legs", font=self.heading_font).grid(column=2, row=1, sticky=W)
+        ttk.Label(self.mainframe, text="Te gaan" if self.triples else "Legs", font=self.heading_font).grid(column=2, row=1, sticky=W)
         ttk.Label(self.mainframe, text="Scores", font=self.heading_font).grid(column=3, row=1, sticky=W)
         ttk.Label(self.mainframe, text="Avg", font=self.heading_font).grid(column=4, row=1, sticky=W)
         ttk.Label(self.mainframe, text="Visit", font=self.heading_font).grid(column=5, row=1, sticky=W, padx=(0, 120))
@@ -418,6 +450,11 @@ class GUI:
         if self.triples:
             self._update_tournament()
 
+    def _adopt_correction(self, board):
+        self.scorer.scores = [int(x) for x in board['scores']]
+        self.scorer.remaining = [[int(n) for n in r] for r in board['targets']]
+        print(f"Score corrected by organiser: {board['scores']} targets {board['targets']}")
+
     def _update_tournament(self):
         """Round timer and sync with the central scoreboard server."""
         left = self.reporter.seconds_left()
@@ -434,10 +471,15 @@ class GUI:
             text += '  (server offline)'
         self.timer_label.configure(text=text)
 
+        teams = self.reporter.teams
+        if teams and len(teams) == self.scorer.num_players and teams != self.scorer.player_names:
+            self.scorer.player_names = teams
+            for label, name in zip(self.player_name_labels, teams):
+                label.configure(text=name)
+
         self.reporter.state = {
-            'teams': list(self.scorer.player_names),
             'scores': [int(x) for x in self.scorer.scores],
-            'targets': [self.scorer.current_target(i) for i in range(self.scorer.num_players)],
+            'targets': [list(r) for r in self.scorer.remaining],
             'current': int(self.scorer.current_player),
             'source': 'camera',
         }

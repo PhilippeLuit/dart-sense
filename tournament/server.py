@@ -9,22 +9,33 @@ Pages:
 
 API (JSON):
     GET  /api/state           full state
-    GET  /api/round           round info + seconds_left (used by the board apps)
+    GET  /api/round           round info + seconds_left
+    GET  /api/board/<n>       round info + that board's teams and scores (used by the board apps)
     POST /api/board/<n>       {"teams": [..], "scores": [..], "targets": [..], "current": 0}
+    POST /api/board/<n>/hit   {"team": 0, "number": 14, "delta": 1}   organiser: mark 14 as hit (+1) or not hit (-1)
+    POST /api/board/<n>/set   {"team": 0, "score": 90, "remaining": [11, 17]}   organiser: set values directly
     POST /api/round/start     {"duration": seconds} (optional)
     POST /api/round/stop
     POST /api/round/next      archive this round's scores into the grand totals, reset boards
-    POST /api/config          {"boards": {"1": {"teams": [..]}}, "duration": s, "display": "auto|boards|totals"}
-    POST /api/reset           wipe everything
+    POST /api/config          {"boards": {"1": {"teams": [..]}}, "duration": s, "display": "auto|boards|totals|schedule"}
+    POST /api/teams           {"teams": ["name", ...]}   the list of participating teams
+    POST /api/schedule        {"schedule": [[["A","B"],["C","D"],...], ...]}  one list of matches per round, one match per board
+    POST /api/schedule/generate {"rounds": 7}   round robin for the team list, trimmed to this many rounds
+    POST /api/reset           scores, totals and round back to the start; teams and schedule are kept
 """
 
 import argparse
 import json
+import mimetypes
 import os
+import sys
 import threading
 import time
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from tournament import rules  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATIC = os.path.join(HERE, 'static')
@@ -36,7 +47,8 @@ state = {}
 
 def fresh_board(n):
     return {'teams': [f'Team {2*n-1}', f'Team {2*n}'], 'scores': [0, 0],
-            'targets': ['T10', 'T10'], 'current': 0, 'source': None, 'updated': None}
+            'targets': [rules.fresh_remaining(), rules.fresh_remaining()],   # numbers still to hit, per team
+            'current': 0, 'source': None, 'updated': None}
 
 
 def fresh_state(num_boards, duration):
@@ -46,7 +58,38 @@ def fresh_state(num_boards, duration):
         'totals': {},
         'history': [],
         'display': 'auto',
+        'teams': [],
+        'schedule': [],
     }
+
+
+def round_robin(teams):
+    """Circle method: every team meets every other team once. Odd counts get a bye."""
+    teams = list(teams)
+    if len(teams) % 2:
+        teams.append(None)
+    n = len(teams)
+    rounds = []
+    for r in range(n - 1):
+        pairs = []
+        for i in range(n // 2):
+            a, b = teams[i], teams[n - 1 - i]
+            if a and b:
+                pairs.append([a, b] if r % 2 == 0 else [b, a])
+        rounds.append(pairs)
+        teams = [teams[0], teams[-1]] + teams[1:-1]
+    return rounds
+
+
+def apply_schedule(round_number):
+    """Put the teams of this round on the boards. Boards without a match keep their names."""
+    schedule = state.get('schedule') or []
+    if round_number - 1 >= len(schedule):
+        return
+    for n, board in state['boards'].items():
+        idx = int(n) - 1
+        if idx < len(schedule[round_number - 1]):
+            board['teams'] = list(schedule[round_number - 1][idx])
 
 
 def save():
@@ -74,7 +117,8 @@ def public_state():
         for team, score in zip(board['teams'], board['scores']):
             totals[team] = totals.get(team, 0) + score
     return {'round': info, 'boards': state['boards'], 'totals': state['totals'],
-            'grand_totals': totals, 'display': state['display'], 'server_time': time.time()}
+            'grand_totals': totals, 'display': state['display'], 'server_time': time.time(),
+            'teams': state.get('teams', []), 'schedule': state.get('schedule', [])}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -93,13 +137,14 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _file(self, name):
-        path = os.path.join(STATIC, name)
-        if not os.path.isfile(path):
+        path = os.path.normpath(os.path.join(STATIC, name))
+        if not path.startswith(STATIC + os.sep) or not os.path.isfile(path):
             return self._json({'error': 'not found'}, 404)
         with open(path, 'rb') as f:
             body = f.read()
+        ctype = 'text/html; charset=utf-8' if name.endswith('.html') else (mimetypes.guess_type(name)[0] or 'application/octet-stream')
         self.send_response(200)
-        self.send_header('Content-Type', 'text/html; charset=utf-8')
+        self.send_header('Content-Type', ctype)
         self.send_header('Content-Length', str(len(body)))
         self.send_header('Cache-Control', 'no-store')
         self.end_headers()
@@ -118,9 +163,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(public_state())
             if path == '/api/round':
                 return self._json(round_info())
+            if path.startswith('/api/board/'):
+                n = path.rsplit('/', 1)[-1]
+                if n in state['boards']:
+                    return self._json({'round': round_info(), 'board': state['boards'][n]})
         pages = {'/': 'display.html', '/display': 'display.html', '/control': 'control.html', '/board': 'board.html'}
         if path in pages:
             return self._file(pages[path])
+        if path.startswith('/static/'):
+            return self._file(path[len('/static/'):])
         self._json({'error': 'not found'}, 404)
 
     def do_POST(self):
@@ -139,12 +190,27 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_post(self, path, data):
         rnd = state['round']
         if path.startswith('/api/board/'):
-            n = path.rsplit('/', 1)[-1]
+            parts = path.split('/')[3:]          # ['<n>'] or ['<n>', 'hit'|'set']
+            n, action = parts[0], (parts[1] if len(parts) > 1 else None)
             if n not in state['boards']:
                 return None
+            board = state['boards'][n]
+            if action in ('hit', 'set'):         # organiser corrections: allowed at any time
+                team = int(data.get('team', 0))
+                if team not in (0, 1):
+                    return None
+                if action == 'hit':
+                    board['targets'][team], board['scores'][team] = rules.apply_correction(
+                        board['targets'][team], board['scores'][team], int(data.get('number', 0)), int(data.get('delta', 1)))
+                else:
+                    if 'score' in data:
+                        board['scores'][team] = max(0, int(data['score']))
+                    if 'remaining' in data:
+                        board['targets'][team] = sorted({int(n) for n in data['remaining'] if int(n) in rules.TARGETS})
+                board['corrected_at'] = board['updated'] = time.time()
+                return {'ok': True, 'board': board}
             if round_info()['status'] == 'finished':
                 return {'ok': False, 'reason': 'round finished', 'round': round_info()}
-            board = state['boards'][n]
             for key in ('teams', 'scores', 'targets', 'current', 'source'):
                 if key in data:
                     board[key] = data[key]
@@ -154,8 +220,9 @@ class Handler(BaseHTTPRequestHandler):
             rnd['duration'] = int(data.get('duration') or rnd['duration'])
             rnd['started_at'] = time.time()
             rnd['status'] = 'running'
+            apply_schedule(rnd['number'])
             for board in state['boards'].values():
-                board.update({'scores': [0, 0], 'targets': ['T10', 'T10'], 'current': 0})
+                board.update({'scores': [0, 0], 'targets': [rules.fresh_remaining(), rules.fresh_remaining()], 'current': 0})
             return round_info()
         if path == '/api/round/stop':
             if rnd['status'] == 'running':
@@ -167,8 +234,36 @@ class Handler(BaseHTTPRequestHandler):
                 for team, score in zip(board['teams'], board['scores']):
                     state['totals'][team] = state['totals'].get(team, 0) + score
                     state['history'].append({'round': rnd['number'], 'board': n, 'team': team, 'score': score})
-                board.update({'scores': [0, 0], 'targets': ['T10', 'T10'], 'current': 0})
+                board.update({'scores': [0, 0], 'targets': [rules.fresh_remaining(), rules.fresh_remaining()], 'current': 0})
             rnd.update({'number': rnd['number'] + 1, 'started_at': None, 'status': 'idle'})
+            apply_schedule(rnd['number'])
+            return public_state()
+        if path == '/api/teams':
+            names = []
+            for t in data.get('teams') or []:
+                t = str(t).strip()[:24]
+                if t and t not in names:
+                    names.append(t)
+            state['teams'] = names
+            return public_state()
+        if path == '/api/schedule/generate':
+            if len(state.get('teams', [])) < 2:
+                return {'ok': False, 'reason': 'enter at least two teams first'}
+            rounds = round_robin(state['teams'])
+            if max(len(r) for r in rounds) > len(state['boards']):
+                return {'ok': False, 'reason': f'{len(state["teams"])} teams need more than {len(state["boards"])} boards per round'}
+            wanted = int(data.get('rounds') or len(rounds))
+            state['schedule'] = rounds[:max(1, wanted)]
+            if rnd['status'] == 'idle':
+                apply_schedule(rnd['number'])
+            return public_state()
+        if path == '/api/schedule':
+            schedule = []
+            for matches in data.get('schedule') or []:
+                schedule.append([[str(a)[:24], str(b)[:24]] for a, b in matches if str(a).strip() and str(b).strip()][:len(state['boards'])])
+            state['schedule'] = schedule
+            if rnd['status'] == 'idle':
+                apply_schedule(rnd['number'])
             return public_state()
         if path == '/api/config':
             for n, cfg in (data.get('boards') or {}).items():
@@ -176,14 +271,17 @@ class Handler(BaseHTTPRequestHandler):
                     state['boards'][n]['teams'] = [str(t)[:24] for t in cfg['teams']][:2]
             if data.get('duration'):
                 rnd['duration'] = int(data['duration'])
-            if data.get('display') in ('auto', 'boards', 'totals'):
+            if data.get('display') in ('auto', 'boards', 'totals', 'schedule'):
                 state['display'] = data['display']
             return public_state()
         if path == '/api/reset':
             keep = {n: b['teams'] for n, b in state['boards'].items()}
+            teams, schedule = state.get('teams', []), state.get('schedule', [])
             state.update(fresh_state(len(state['boards']), rnd['duration']))
-            for n, teams in keep.items():
-                state['boards'][n]['teams'] = teams
+            state['teams'], state['schedule'] = teams, schedule
+            for n, names in keep.items():
+                state['boards'][n]['teams'] = names
+            apply_schedule(1)
             return public_state()
         return None
 
